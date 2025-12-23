@@ -11,7 +11,7 @@
    (gen-string :length (gen-integer :min length :max length)
                :elements (gen-character :code (gen-integer :min 97 :max 122)))))
 
-(defmacro with-docker-container ((container-name container-folder) &body body)
+(defmacro with-docker-container ((container-name container-folder vpn-local-port) &body body)
   (alexandria:with-gensyms (erebus-test-folder
                             junk
                             dockerfile
@@ -41,14 +41,23 @@
          (let* ((,container-name (format nil "erebus_~a" (random-string 20)))
                 (,container-folder (merge-pathnames (make-pathname :directory
                                                                    (list :relative ,container-name))
-                                                    ,junk)))
+                                                    ,junk))
+                (,vpn-local-port (funcall (gen-integer :min 10000 :max 60000))))
            (ensure-directories-exist ,container-folder)
 
            (unwind-protect
                 (progn
                   (uiop:run-program
-                   (format nil "docker create --name ~a -v ~a:/etc/openvpn/ ralt/erebus:latest"
-                           ,container-name ,container-folder)
+                   (format nil "docker create \\
+                                  --privileged \\
+                                  --publish ~a:1194/udp \\
+                                  --name ~a \\
+                                  --volume ~a:/etc/openvpn/ \\
+                                  --volume /lib/modules:/lib/modules \\
+                                  ralt/erebus:latest"
+                           ,vpn-local-port
+                           ,container-name
+                           ,container-folder)
                    :output t
                    :error-output t)
                   (uiop:run-program
@@ -59,7 +68,7 @@
                   (,run-in-container ,container-name "ovpn_initpki nopass")
                   (,run-in-container ,container-name "easyrsa build-client-full erebus nopass")
                   (,run-in-container ,container-name "ovpn_getclient erebus > /etc/openvpn/erebus.ovpn")
-                  (,run-in-container ,container-name "mkdir -p /run/nginx && nginx && ovpn_run")
+                  (,run-in-container ,container-name "mkdir -p /run/nginx && nginx && nohup ovpn_run &")
 
                   (progn ,@body))
              (uiop:run-program (format nil "docker rm --force ~a" ,container-name) :output t :error-output t)

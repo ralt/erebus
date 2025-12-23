@@ -4,7 +4,8 @@
   :author "Florian Margaine <florian@margaine.com>"
   :description "Rootless IPSec userspace proxy"
   :depends-on (:uiop
-               :alexandria)
+               :alexandria
+               :usocket)
   :in-order-to ((test-op (test-op :erebus/test)))
   :components ((:module "src"
                 :serial t
