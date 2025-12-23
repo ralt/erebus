@@ -30,33 +30,46 @@
               (not ,ignore-me-file)
               (> (file-write-date ,dockerfile)
                  (file-write-date ,ignore-me-file)))
-         (uiop:run-program "cd t; docker build -t erebus:latest ." :output t :error-output t)
+         (uiop:run-program "cd t; docker build -t ralt/erebus:latest ." :output t :error-output t)
          ;; a quick version of "touch" that updates the mtime on a new file every time it runs
          (close
           (open ,ignore-me-filename :direction :output :if-exists :supersede :if-does-not-exist :create)))
        (flet ((,run-in-container (container command)
-                (uiop:run-program (format nil "docker exec -i ~a ~a" container command)
+                (uiop:run-program (format nil "docker exec -i ~a bash -c ~s" container command)
                                   :output t
                                   :error-output t)))
-         (let* ((,container-name (random-string 20))
-                (,container-folder (merge-pathnames ,container-name ,junk)))
+         (let* ((,container-name (format nil "erebus_~a" (random-string 20)))
+                (,container-folder (merge-pathnames (make-pathname :directory
+                                                                   (list :relative ,container-name))
+                                                    ,junk)))
            (ensure-directories-exist ,container-folder)
-           (uiop:run-program
-            (format nil "docker create --name ~a -v ~a:/etc/openvpn/ erebus:latest"
-                    ,container-name ,container-folder)
-            :output t
-            :error-output t)
-           (uiop:run-program
-            (format nil "docker start ~a" ,container-name)
-            :output t
-            :error-output t)
-           (,run-in-container ,container-name "ovpn_genconfig -u udp://erebus.local")
-           (,run-in-container ,container-name "ovpn_initpki nopass")
-           (,run-in-container ,container-name "easyrsa build-client-full erebus nopass")
-           (,run-in-container ,container-name "ovpn_getclient erebus > /etc/openvpn/erebus.ovpn")
-           (,run-in-container ,container-name "mkdir -p /run/nginx")
-           (,run-in-container ,container-name "nginx")
-           (,run-in-container ,container-name "nohup ovpn_run")))
-       (unwind-protect
-            (progn ,@body)
-         (uiop:run-program (format nil "docker rm --force ~a" ,container-name))))))
+
+           (unwind-protect
+                (progn
+                  (uiop:run-program
+                   (format nil "docker create --name ~a -v ~a:/etc/openvpn/ ralt/erebus:latest"
+                           ,container-name ,container-folder)
+                   :output t
+                   :error-output t)
+                  (uiop:run-program
+                   (format nil "docker start ~a" ,container-name)
+                   :output t
+                   :error-output t)
+                  (,run-in-container ,container-name "ovpn_genconfig -u udp://erebus.local")
+                  (,run-in-container ,container-name "ovpn_initpki nopass")
+                  (,run-in-container ,container-name "easyrsa build-client-full erebus nopass")
+                  (,run-in-container ,container-name "ovpn_getclient erebus > /etc/openvpn/erebus.ovpn")
+                  (,run-in-container ,container-name "mkdir -p /run/nginx && nginx && ovpn_run")
+
+                  (progn ,@body))
+             (uiop:run-program (format nil "docker rm --force ~a" ,container-name) :output t :error-output t)
+             ;; because the folders are created as root inside the
+             ;; container, the lisp process on the host will usually
+             ;; not have permissions to delete it. we thus have to do
+             ;; the deletion inside the container of most of the
+             ;; stuff, and then we can cleanup host-side.
+             (uiop:run-program
+              (format nil "docker run --rm -v ~a:/etc/openvpn -i ralt/erebus:latest bash -c 'rm -rf /etc/openvpn/*'"
+                      ,container-folder)
+              :output t :error-output t)
+             (uiop:delete-directory-tree ,container-folder :validate t)))))))

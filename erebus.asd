@@ -14,7 +14,8 @@
   :depends-on (:fiveam)
   :components ((:module "t"
                 :serial t
-                :components ((:file "package"))))
+                :components ((:file "package")
+                             (:file "connect"))))
   :perform (test-op (op c)
                     (symbol-call :fiveam :run!
                                  (find-symbol* :erebus :erebus/test))))
