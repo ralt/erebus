@@ -98,6 +98,7 @@ Longer term:
 - IPsec ESP (tunnel mode, user space)
 - IKEv2 for key management
 - shared abstractions between OpenVPN and IPsec
+- support for exposing local resources to the VPN
 
 The same proxy-based model is used throughout.
 
