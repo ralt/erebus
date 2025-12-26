@@ -2,7 +2,7 @@
 
 This roadmap describes the incremental implementation steps needed to realize the design described in `README.md`.
 
-Each stage builds directly on the previous one and should leave the codebase in a working, testable state.
+Each phase builds directly on the previous one and should leave the codebase in a working, testable state.
 
 ---
 
@@ -37,7 +37,7 @@ Client responsibilities:
 - Session ID generation and tracking
 - Packet ID tracking
 - HARD_RESET exchange
-- Control packet retransmission (minimal)
+- Minimal control packet retransmission
 
 Exit condition:
 - Client successfully completes session setup
@@ -53,10 +53,10 @@ Goal: extract and maintain VPN session parameters.
 - Extract assigned virtual IP
 - Extract routes and MTU
 - Store session state internally
-- Reject data packets before session is established
+- Reject data packets before session establishment
 
 Exit condition:
-- Client knows its virtual IP and can reason about routing
+- Client knows its virtual IP and routing scope
 
 ---
 
@@ -70,8 +70,7 @@ Goal: exchange raw IP packets over the VPN.
 - No encryption or authentication
 
 Exit condition:
-- IP packets successfully traverse the VPN
-- Responses are observable and parsed
+- IP packets successfully traverse the VPN in both directions
 
 ---
 
@@ -86,18 +85,18 @@ Goal: reliably build and interpret IPv4 packets.
 - No fragmentation
 
 Exit condition:
-- Valid IPv4 packets are accepted by peers on the VPN
+- Valid IPv4 packets are accepted by VPN peers
 
 ---
 
-## Phase 5 — Minimal TCP implementation
+## Phase 5 — Minimal TCP implementation (outbound)
 
-Goal: support enough TCP to carry HTTP traffic.
+Goal: support enough TCP to initiate connections to VPN resources.
 
 Required features:
 - TCP header construction
 - TCP checksum (pseudo-header)
-- 3-way handshake
+- 3-way handshake (client-initiated)
 - Sequence and acknowledgment tracking
 - PSH + ACK data transfer
 - Basic receive buffering
@@ -111,16 +110,16 @@ Explicitly deferred:
 
 Exit condition:
 - A TCP connection can be established to a VPN resource
-- Data flows in both directions
+- Data flows reliably from VPN to local client
 
 ---
 
-## Phase 6 — HTTP proxy integration
+## Phase 6 — Outbound HTTP proxy
 
-Goal: expose VPN connectivity via a local HTTP proxy.
+Goal: expose VPN access via a local HTTP proxy.
 
 - Accept HTTP requests from local clients
-- Map requests to virtual TCP connections
+- Map requests to outbound virtual TCP connections
 - Forward responses back to clients
 - Handle multiple concurrent connections (basic)
 
@@ -129,9 +128,40 @@ Exit condition:
 
 ---
 
-## Phase 7 — Static-key encryption (OpenVPN)
+## Phase 7 — Inbound TCP support (listening in user-space)
 
-Goal: add confidentiality and integrity to the data channel.
+Goal: accept connections initiated from the VPN toward the client.
+
+- Recognize inbound TCP SYN packets
+- Maintain per-connection TCP state (server role)
+- Complete TCP handshakes initiated remotely
+- Route packets to local listeners
+- Support basic port mapping rules
+
+Exit condition:
+- VPN peers can establish TCP connections to the client’s virtual IP
+
+---
+
+## Phase 8 — Exposing local services to the VPN
+
+Goal: make local resources reachable from within the VPN.
+
+- Map VPN-facing ports to local services
+  - e.g. `10.8.0.6:8080 → 127.0.0.1:3000`
+- Forward inbound TCP streams to local sockets
+- Translate responses back into VPN packets
+- Enforce explicit exposure rules (no implicit listening)
+
+Exit condition:
+- A service running locally is reachable from inside the VPN
+- No system-wide port binding or root privileges required
+
+---
+
+## Phase 9 — Static-key encryption (OpenVPN)
+
+Goal: add confidentiality and integrity to VPN traffic.
 
 - Static shared key support
 - Symmetric encryption
@@ -139,12 +169,11 @@ Goal: add confidentiality and integrity to the data channel.
 - Packet replay protection
 
 Exit condition:
-- Encrypted OpenVPN sessions function correctly
-- Invalid or replayed packets are rejected
+- Encrypted sessions function correctly in both directions
 
 ---
 
-## Phase 8 — TLS control channel (OpenVPN)
+## Phase 10 — TLS control channel (OpenVPN)
 
 Goal: support standard OpenVPN key negotiation.
 
@@ -158,7 +187,7 @@ Exit condition:
 
 ---
 
-## Phase 9 — IPsec ESP (userspace)
+## Phase 11 — IPsec ESP
 
 Goal: support IPsec-style tunneling using the same proxy model.
 
@@ -168,11 +197,11 @@ Goal: support IPsec-style tunneling using the same proxy model.
 - Algorithm abstraction shared with OpenVPN
 
 Exit condition:
-- IP packets successfully traverse an ESP tunnel without kernel XFRM
+- Bidirectional IP traffic over ESP without kernel XFRM
 
 ---
 
-## Phase 10 — IKEv2
+## Phase 12 — IKEv2
 
 Goal: automate key management for IPsec.
 
@@ -186,14 +215,14 @@ Exit condition:
 
 ---
 
-## Deferred / ongoing work
+## Deferred work
 
 These are intentionally postponed until correctness is established:
 
 - Performance optimizations
 - Compression
 - Advanced TCP behavior
-- Extensive error recovery
+- Flow control and backpressure
 - Observability and metrics
 - Protocol extensions
 
@@ -201,4 +230,9 @@ These are intentionally postponed until correctness is established:
 
 ## Notes
 
-The ordering of (most) phases is intentional. Later phases assume correctness and stability in earlier ones. The exception are phases 8 and 9/10 that might be interleaved (i.e. IPsec ESP with IKEv2 support might be implemented before OpenVPN TLS support).
+Outbound and inbound traffic are treated symmetrically at the IP and TCP layers.
+Differences are handled at the connection management and policy layers.
+
+The incremental structure of this roadmap is intentional and should be
+preserved. The exception might be on support for OpenVPN TLS vs IPsec
+ESP/IKEv2, as these are independent.
