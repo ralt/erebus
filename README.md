@@ -13,15 +13,16 @@ The initial focus is interoperability with OpenVPN servers, with longer-term sup
 At a high level, erebus implements:
 
 - a rootless VPN client
-- running entirely in user space
-- that speaks real VPN protocols (OpenVPN today, IPsec/IKE later)
-- and exposes connectivity via a local HTTP proxy
+- user-space TCP/IP handling for VPN traffic
+- outbound access to VPN resources via a local HTTP proxy
+- inbound access, allowing local services to be exposed to the VPN
 
-Rather than creating a TUN/TAP interface and letting the operating system handle networking, this client:
-- establishes a VPN session itself
+Rather than modifying the host networking stack, erebus:
+
+- establishes VPN sessions itself
 - constructs and parses IP packets in user space
-- implements a minimal TCP stack
-- maps HTTP requests to VPN traffic explicitly
+- maintains minimal TCP state for both outbound and inbound connections
+- forwards HTTP traffic between local clients or services and the VPN
 
 The result is a VPN agent rather than a system-wide VPN.
 
@@ -42,11 +43,12 @@ That model does not work well in many environments:
 - developer tooling
 - restricted or multi-tenant hosts
 
-This project explores a different approach:
-- no root privileges
+erebus explores a different approach:
+
+- no root privileges required
 - no kernel tunneling
-- no global routing changes
-- explicit, opt-in access via a proxy
+- explicit, opt-in connectivity through a proxy
+- bidirectional traffic: outbound to VPN resources, inbound exposing local services
 
 It also aims to make VPN protocols easier to understand by implementing them incrementally, in readable user-space code, without relying on kernel abstractions... but mostly as a side benefit for the author.
 
@@ -54,7 +56,7 @@ It also aims to make VPN protocols easier to understand by implementing them inc
 
 ## What this is not
 
-This project is not:
+erebus is not:
 - a drop-in replacement for full VPN clients
 - a system-wide VPN solution
 - focused on maximum performance (initially)
@@ -90,23 +92,23 @@ All VPN-related logic lives in user space. The operating system kernel is not in
 
 Short term:
 - OpenVPN (UDP, tun mode)
-- minimal configurations first (no auth, no crypto)
-- static-key encryption
-- TLS control channel
+- Outbound HTTP proxy for VPN resources
+- Minimal TCP stack for outbound connections
+- Inbound TCP handling to expose local services
+- Bidirectional IP packet flow over the VPN
 
 Longer term:
-- IPsec ESP (tunnel mode, user space)
-- IKEv2 for key management
-- shared abstractions between OpenVPN and IPsec
-- support for exposing local resources to the VPN
-
-The same proxy-based model is used throughout.
+- Static-key encryption for OpenVPN
+- TLS control channel for OpenVPN
+- IPsec ESP tunnel support (user-space)
+- IKEv2 key management for IPsec
+- Performance improvements, compression, and advanced TCP handling
 
 ---
 
 ## Incremental development
 
-This project is built in small, testable steps. Each step will result in a working system, even if it is incomplete.
+erebus is built in small, testable steps. Each step will result in a working system, even if it is incomplete.
 
 Examples include:
 - establishing a VPN session without encryption

@@ -17,7 +17,7 @@ Goal: establish a reliable UDP transport and internal structure.
 - No protocol logic yet
 
 Exit condition:
-- Client can send and receive arbitrary UDP payloads
+- erebus can send and receive arbitrary UDP payloads
 
 ---
 
@@ -31,7 +31,7 @@ Server assumptions:
 - `cipher none`
 - `auth none`
 
-Client responsibilities:
+erebus responsibilities:
 - OpenVPN packet framing
 - Control packet opcodes
 - Session ID generation and tracking
@@ -40,7 +40,7 @@ Client responsibilities:
 - Minimal control packet retransmission
 
 Exit condition:
-- Client successfully completes session setup
+- erebus successfully completes session setup
 - Server responds consistently to control packets
 
 ---
@@ -56,7 +56,7 @@ Goal: extract and maintain VPN session parameters.
 - Reject data packets before session establishment
 
 Exit condition:
-- Client knows its virtual IP and routing scope
+- erebus knows its virtual IP and routing scope
 
 ---
 
@@ -110,7 +110,7 @@ Explicitly deferred:
 
 Exit condition:
 - A TCP connection can be established to a VPN resource
-- Data flows reliably from VPN to local client
+- Data flows reliably from VPN to erebus
 
 ---
 
@@ -130,7 +130,7 @@ Exit condition:
 
 ## Phase 7 — Inbound TCP support (listening in user-space)
 
-Goal: accept connections initiated from the VPN toward the client.
+Goal: accept connections initiated from the VPN toward erebus.
 
 - Recognize inbound TCP SYN packets
 - Maintain per-connection TCP state (server role)
@@ -139,7 +139,7 @@ Goal: accept connections initiated from the VPN toward the client.
 - Support basic port mapping rules
 
 Exit condition:
-- VPN peers can establish TCP connections to the client’s virtual IP
+- VPN peers can establish TCP connections to the erebus' virtual IP
 
 ---
 
