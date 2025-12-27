@@ -82,7 +82,7 @@ VPN protocol framing (OpenVPN / ESP)
 UDP socket
 ↓
 VPN server
-``
+```
 
 All VPN-related logic lives in user space. The operating system kernel is not involved in routing, TCP state, or encryption for VPN traffic.
 
