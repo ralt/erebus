@@ -9,9 +9,9 @@
 (defconstant +P_CONTROL_HARD_RESET_SERVER_V2+ 8)
 
 (defbinary %openvpn-control-header ()
-  (%opcode 0 :type (unsigned-byte 8))
-  (%session-id 0 :type (unsigned-byte 64) :byte-order :big-endian)
-  (%packet-id 0 :type (unsigned-byte 32) :byte-order :big-endian))
+  (opcode 0 :type (unsigned-byte 8))
+  (session-id 0 :type (unsigned-byte 64) :byte-order :big-endian)
+  (packet-id 0 :type (unsigned-byte 32) :byte-order :big-endian))
 
 (defbinary %openvpn-tlv ()
   (length 0 :type (unsigned-byte 16) :byte-order :big-endian)
@@ -24,9 +24,9 @@
 
 (defun %make-hard-reset-client-packet ()
   (with-output-to-sequence (out)
-    (write-binary (make-%openvpn-control-header :%opcode +P_CONTROL_HARD_RESET_CLIENT_V2+
-                                                :%session-id (%new-session-id)
-                                                :%packet-id 0)
+    (write-binary (make-%openvpn-control-header :opcode +P_CONTROL_HARD_RESET_CLIENT_V2+
+                                                :session-id (%new-session-id)
+                                                :packet-id 0)
                   out)))
 
 (defun %read-packet-values (tlvs stream)
