@@ -1,5 +1,6 @@
 (defpackage #:erebus/test
-  (:use :cl :fiveam :erebus))
+  (:use :cl :fiveam :erebus)
+  (:local-nicknames (#:a #:alexandria)))
 
 (in-package #:erebus/test)
 
@@ -12,7 +13,7 @@
                :elements (gen-character :code (gen-integer :min 97 :max 122)))))
 
 (defmacro with-docker-container ((container-name container-folder vpn-local-port) &body body)
-  (alexandria:with-gensyms (erebus-test-folder
+  (a:with-gensyms (erebus-test-folder
                             junk
                             dockerfile
                             ignore-me-file
