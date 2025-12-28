@@ -46,6 +46,10 @@
 (defun start-services (name)
   (run-in-container name "mkdir -p /run/nginx && nginx && nohup ovpn_run &"))
 
+(defun restart-services (name)
+  (run-in-container name "killall -9 nginx && killall -9 openvpn || true")
+  (start-services name))
+
 (defun cleanup-container (name folder)
   (uiop:run-program (format nil "docker rm --force ~a" name) :output t :error-output t)
   ;; because the folders are created as root inside the container, the
@@ -60,7 +64,7 @@
    :output t :error-output t)
   (uiop:delete-directory-tree folder :validate t))
 
-(defmacro with-docker-container ((container-name container-folder vpn-local-port &optional prepare-hook) &body body)
+(defmacro with-docker-container ((container-name container-folder vpn-local-port &optional (prepare-hook (lambda (name container) (declare (ignore name container))))) &body body)
   (a:with-gensyms (erebus-test-folder
                    junk
                    dockerfile
@@ -91,8 +95,7 @@
               (progn
                 (create-container ,container-name ,container-folder ,vpn-local-port)
                 (prepare-container ,container-name)
-                (when ,prepare-hook
-                  (funcall prepare-hook ,container-name ,container-folder))
+                (funcall ,prepare-hook ,container-name ,container-folder)
                 (start-services ,container-name)
 
                 (progn ,@body))
