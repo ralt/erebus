@@ -60,13 +60,12 @@
    :output t :error-output t)
   (uiop:delete-directory-tree folder :validate t))
 
-(defmacro with-docker-container ((container-name container-folder vpn-local-port) &body body)
+(defmacro with-docker-container ((container-name container-folder vpn-local-port &optional prepare-hook) &body body)
   (a:with-gensyms (erebus-test-folder
                    junk
                    dockerfile
                    ignore-me-file
-                   ignore-me-filename
-                   run-in-container)
+                   ignore-me-filename)
     `(let* ((,erebus-test-folder
               (merge-pathnames "t/"
                                (asdf:system-source-directory :erebus/test)))
@@ -92,6 +91,8 @@
               (progn
                 (create-container ,container-name ,container-folder ,vpn-local-port)
                 (prepare-container ,container-name)
+                (when ,prepare-hook
+                  (funcall prepare-hook ,container-name ,container-folder))
                 (start-services ,container-name)
 
                 (progn ,@body))
