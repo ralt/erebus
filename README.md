@@ -131,3 +131,15 @@ Expect:
 - changing APIs
 
 The roadmap prioritizes incremental progress and interoperability over completeness.
+
+---
+
+## Development environment
+
+In order to help out during development, the `erebus/test` package provides a few helpers, most notably:
+
+- `(create-container NAME FOLDER VPN-LOCAL-PORT)`: creates a docker container `NAME` with the appropriate configuration later available in `FOLDER`, exposing its VPN port to `localhost:VPN-LOCAL-PORT`
+- `(prepare-container NAME)`: runs all the preparation steps for the openvpn server configuration
+- `(start-services NAME)`: starts openvpn and nginx
+
+This lets you quickly setup a development environment with openvpn server running inside a docker container. You can edit the configuration in `FOLDER` after `prepare-container` and before `start-services`. Quick tip though: you need to do that from within a container; feel free to use `(run-container NAME COMMAND)`: the `FOLDER` will have root permissions, so you most likely won't be able to edit it from the REPL directly.
