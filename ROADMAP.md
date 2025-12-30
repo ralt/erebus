@@ -1,238 +1,203 @@
-# Roadmap
+# ROADMAP
 
-This roadmap describes the incremental implementation steps needed to realize the design described in `README.md`.
+This document describes the incremental implementation plan for the project.
+Each phase is intended to produce a working, testable system before moving on to the next.
 
-Each phase builds directly on the previous one and should leave the codebase in a working, testable state.
+The focus is on **progressive capability**, not completeness.
 
----
+## Phase 1 — OpenVPN static key, minimal implementation
 
-## Phase 0 — Project skeleton & transport
+Goal: implement the simplest possible OpenVPN-compatible client using a pre-shared static key.
 
-Goal: establish a reliable UDP transport and internal structure.
+Scope:
 
-- Project layout and core abstractions
-- UDP socket management
-- Send/receive loop
-- Logging and packet inspection tooling
-- No protocol logic yet
+* OpenVPN static-key mode
+* No control channel
+* No TLS
+* `P_DATA_V1` packets only
 
-Exit condition:
-- erebus can send and receive arbitrary UDP payloads
+Key tasks:
 
----
+* Parse `static.key`
+* Implement:
 
-## Phase 1 — OpenVPN control channel (no auth, no crypto)
+  * packet ID counter
+  * AES encryption
+  * HMAC authentication
+* Serialize and deserialize `P_DATA_V1`
+* Interoperate with a minimal OpenVPN server in static-key mode
+* Exchange raw payload bytes successfully
 
-Goal: establish an OpenVPN session using the simplest possible server configuration.
+Outcome:
 
-Server assumptions:
-- UDP
-- tun mode
-- `cipher none`
-- `auth none`
+* A minimal, ESP-like OpenVPN client
+* Cryptographic and packet-format foundation
 
-erebus responsibilities:
-- OpenVPN packet framing
-- Control packet opcodes
-- Session ID generation and tracking
-- Packet ID tracking
-- HARD_RESET exchange
-- Minimal control packet retransmission
+## Phase 2 — Transport abstraction (UDP and TCP)
 
-Exit condition:
-- erebus successfully completes session setup
-- Server responds consistently to control packets
+Goal: make the OpenVPN client transport-agnostic early.
 
----
+Scope:
 
-## Phase 2 — PUSH_REPLY handling & session state
+* Support both UDP and TCP transport modes
+* Static-key mode only
+* Identical packet logic across transports
 
-Goal: extract and maintain VPN session parameters.
+Key tasks:
 
-- Parse `PUSH_REPLY`
-- Extract assigned virtual IP
-- Extract routes and MTU
-- Store session state internally
-- Reject data packets before session establishment
+* Define a transport abstraction layer:
 
-Exit condition:
-- erebus knows its virtual IP and routing scope
+  * send packet
+  * receive packet
+* Implement:
 
----
+  * UDP transport (datagram-based)
+  * TCP transport (length-prefixed stream)
+* Ensure packet parsing logic is independent of transport
+* Allow configuration-time selection of UDP or TCP
 
-## Phase 3 — OpenVPN data channel (plaintext)
+Outcome:
 
-Goal: exchange raw IP packets over the VPN.
+* One OpenVPN implementation that can switch between UDP and TCP
+* No protocol logic duplicated between transports
 
-- Implement `P_DATA` packet handling
-- Inject raw IP packets as data payloads
-- Receive and parse incoming IP packets
-- No encryption or authentication
+Good catch — you’re right, Phase 3 is really about **embedding a TCP/IP stack inside the VPN payload**, not about “rootless” as a goal in itself. The rootless aspect is a consequence, not the focus.
 
-Exit condition:
-- IP packets successfully traverse the VPN in both directions
+Below is a **clean rewording of Phase 3 only**, keeping the rest of the roadmap unchanged and consistent in tone.
+
+You can replace just that section in your `ROADMAP.md`.
 
 ---
 
-## Phase 4 — IPv4 packet construction & parsing
+## Phase 3 — Embedded TCP/IP stack over VPN traffic
 
-Goal: reliably build and interpret IPv4 packets.
+Goal: implement a TCP/IP stack that runs entirely inside the VPN data channel.
 
-- IPv4 header construction
-- Header checksum calculation
-- Packet parsing and validation
-- Fixed MTU
-- No fragmentation
+Scope:
 
-Exit condition:
-- Valid IPv4 packets are accepted by VPN peers
+* TCP over VPN payloads
+* No reliance on kernel networking
+* Client-initiated connections only
 
----
+Key tasks:
 
-## Phase 5 — Minimal TCP implementation (outbound)
+* Implement minimal IP and TCP packet handling
+* Maintain TCP connection state (sequence numbers, ACKs)
+* Handle segmentation and reassembly
+* Map TCP packets to and from VPN data packets
+* Support reliable byte streams over the VPN tunnel
 
-Goal: support enough TCP to initiate connections to VPN resources.
+Out of scope:
 
-Required features:
-- TCP header construction
-- TCP checksum (pseudo-header)
-- 3-way handshake (client-initiated)
-- Sequence and acknowledgment tracking
-- PSH + ACK data transfer
-- Basic receive buffering
-- Connection teardown via RST or FIN
+* UDP
+* ICMP
+* Full TCP feature set (window scaling, SACK, etc.)
 
-Explicitly deferred:
-- Retransmissions
-- Congestion control
-- Window scaling
-- TCP options
+Outcome:
 
-Exit condition:
-- A TCP connection can be established to a VPN resource
-- Data flows reliably from VPN to erebus
+* A functional TCP/IP stack embedded inside VPN traffic
+* Foundation for higher-level protocols (e.g. HTTP) without OS-level networking
 
----
+## Phase 4 — Local HTTP proxy over OpenVPN
 
-## Phase 6 — Outbound HTTP proxy
+Goal: expose VPN access through a local, developer-friendly interface.
 
-Goal: expose VPN access via a local HTTP proxy.
+Scope:
 
-- Accept HTTP requests from local clients
-- Map requests to outbound virtual TCP connections
-- Forward responses back to clients
-- Handle multiple concurrent connections (basic)
+* HTTP/1.x
+* Explicit proxy model
+* No system-wide routing
 
-Exit condition:
-- Standard HTTP clients (e.g. curl) can access VPN resources
+Key tasks:
 
----
+* Implement local HTTP proxy listener
+* Translate HTTP requests into TCP connections over the VPN
+* Forward responses back to local clients
+* Support multiple concurrent proxied connections
 
-## Phase 7 — Inbound TCP support (listening in user-space)
+Outcome:
 
-Goal: accept connections initiated from the VPN toward erebus.
+* Practical access to VPN resources
+* Clear demonstration of rootless design goals
 
-- Recognize inbound TCP SYN packets
-- Maintain per-connection TCP state (server role)
-- Complete TCP handshakes initiated remotely
-- Route packets to local listeners
-- Support basic port mapping rules
+## Phase 5 — Expose local services to the VPN
 
-Exit condition:
-- VPN peers can establish TCP connections to the erebus' virtual IP
+Goal: allow VPN peers to access selected local services through the client.
 
----
+Scope:
 
-## Phase 8 — Exposing local services to the VPN
+* Explicit TCP port forwarding
+* Opt-in exposure only
 
-Goal: make local resources reachable from within the VPN.
+Key tasks:
 
-- Map VPN-facing ports to local services
-  - e.g. `10.8.0.6:8080 → 127.0.0.1:3000`
-- Forward inbound TCP streams to local sockets
-- Translate responses back into VPN packets
-- Enforce explicit exposure rules (no implicit listening)
+* Accept incoming VPN connections
+* Forward traffic to local services (e.g. local HTTP server)
+* Handle bidirectional data flow
+* Apply basic access controls
 
-Exit condition:
-- A service running locally is reachable from inside the VPN
-- No system-wide port binding or root privileges required
+Outcome:
 
----
+* Bidirectional VPN interaction without kernel networking
+* Enables lightweight ingress use cases
 
-## Phase 9 — Static-key encryption (OpenVPN)
+## Phase 6 — OpenVPN TLS support (UDP and TCP)
 
-Goal: add confidentiality and integrity to VPN traffic.
+Goal: add full TLS-based OpenVPN support on top of an already working transport and proxy stack.
 
-- Static shared key support
-- Symmetric encryption
-- HMAC authentication
-- Packet replay protection
+Scope:
 
-Exit condition:
-- Encrypted sessions function correctly in both directions
+* OpenVPN TLS mode
+* Both UDP and TCP transports
+* Control and data channels
 
----
+Key tasks:
 
-## Phase 10 — TLS control channel (OpenVPN)
+* Implement:
 
-Goal: support standard OpenVPN key negotiation.
+  * `P_CONTROL_HARD_RESET_*`
+  * TLS handshake inside control packets
+* Integrate TLS library (e.g. CL+SSL / OpenSSL)
+* Parse and apply `PUSH_REPLY`
+* Derive and rotate data-channel keys
+* Reuse existing transport abstraction
 
-- TLS handshake inside OpenVPN control packets
-- Server certificate validation
-- Data channel key derivation
-- Rekeying (initially optional)
+Outcome:
 
-Exit condition:
-- Interoperability with standard OpenVPN servers using TLS
+* Fully standards-compatible OpenVPN client
+* Rootless operation preserved
 
----
+## Phase 7 — ESP / IKEv2 (strongSwan interoperability)
 
-## Phase 11 — IPsec ESP
+Goal: extend the architecture beyond OpenVPN to standard IPsec.
 
-Goal: support IPsec-style tunneling using the same proxy model.
+Scope:
 
-- ESP tunnel mode
-- Manual Security Association configuration
-- Replay protection
-- Algorithm abstraction shared with OpenVPN
+* ESP data plane
+* IKEv2 control plane
+* strongSwan as reference server
 
-Exit condition:
-- Bidirectional IP traffic over ESP without kernel XFRM
+Key tasks:
 
----
+* Implement IKEv2 exchanges
+* Establish ESP Security Associations
+* Reuse existing crypto and transport abstractions
+* Compare and align with OpenVPN static-key semantics
 
-## Phase 12 — IKEv2
+Outcome:
 
-Goal: automate key management for IPsec.
+* Generalized VPN client architecture
+* Support for industry-standard IPsec deployments
 
-- IKEv2 handshake
-- SA negotiation
-- Rekeying and lifetimes
-- Algorithm negotiation
+## Phase 8 — Performance and advanced features (optional)
 
-Exit condition:
-- Fully dynamic IPsec tunnel establishment
+Goal: improve efficiency and robustness after correctness is established.
 
----
+Potential areas:
 
-## Deferred work
+* TCP stack optimizations
+* UDP, ICMP, full TCP feature set
+* Packet batching
+* Compression
 
-These are intentionally postponed until correctness is established:
-
-- Performance optimizations
-- Compression
-- Advanced TCP behavior
-- Flow control and backpressure
-- Observability and metrics
-- Protocol extensions
-
----
-
-## Notes
-
-Outbound and inbound traffic are treated symmetrically at the IP and TCP layers.
-Differences are handled at the connection management and policy layers.
-
-The incremental structure of this roadmap is intentional and should be
-preserved. The exception might be on support for OpenVPN TLS vs IPsec
-ESP/IKEv2, as these are independent.
+These are intentionally deferred until all major protocol features are stable.

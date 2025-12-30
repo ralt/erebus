@@ -5,11 +5,15 @@
   :description "Rootless IPSec userspace proxy"
   :depends-on (:uiop
                :alexandria
-               :usocket)
+               :usocket
+               :lisp-binary
+               :flexi-streams)
   :in-order-to ((test-op (test-op :erebus/test)))
   :components ((:module "src"
                 :serial t
-                :components ((:file "package")))))
+                :components ((:file "package")
+                             (:file "openvpn")
+                             (:file "main")))))
 
 (defsystem erebus/test
   :depends-on (:fiveam)
