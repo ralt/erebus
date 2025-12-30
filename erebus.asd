@@ -7,7 +7,8 @@
                :alexandria
                :usocket
                :lisp-binary
-               :flexi-streams)
+               :flexi-streams
+               :cl+ssl)
   :in-order-to ((test-op (test-op :erebus/test)))
   :components ((:module "src"
                 :serial t
