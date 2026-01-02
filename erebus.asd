@@ -27,7 +27,8 @@
   :components ((:module "t"
                 :serial t
                 :components ((:file "package")
-                             (:file "connect"))))
+                             (:file "connect")
+                             (:file "openvpn-statickey"))))
   :perform (test-op (op c)
                     (symbol-call :fiveam :run!
                                  (find-symbol* :erebus :erebus/test))))

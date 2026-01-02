@@ -6,6 +6,8 @@
                     (#:ic #:ironclad)
                     (#:fs #:flexi-streams)
                     (#:bt #:bordeaux-threads)
-                    (#:lp.q #:lparallel.queue)))
-
-(in-package #:erebus)
+                    (#:lp.q #:lparallel.queue))
+  (:export #:connect
+           #:ping
+           #:disconnect
+           #:openvpn-client-static-key))
