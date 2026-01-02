@@ -8,12 +8,15 @@
                :cl-base64
                :ironclad
                :flexi-streams
-               :uiop)
+               :uiop
+               :bordeaux-threads
+               :lparallel)
   :in-order-to ((test-op (test-op :erebus/test)))
   :components ((:module "src"
                 :serial t
                 :components ((:file "package")
                              (:file "ip")
+                             (:file "vpn-connection")
                              (:file "openvpn")
                              (:file "main")))))
 
