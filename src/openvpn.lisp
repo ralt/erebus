@@ -1,58 +1,50 @@
 (in-package #:erebus)
 
-(defclass openvpn-client ()
+(defclass openvpn-client-static-key ()
   ((host :initarg :host :reader host)
    (port :initarg :port :reader port)
+   (client-ip :initarg :client-ip :reader client-ip)
+   (%client-ip-address :accessor %client-ip-address)
+   (%static-key :initarg :static-key :reader %static-key :initform nil)
+   (%cipher :accessor %cipher)
+   (%hmac :accessor %hmac)
    (%socket :accessor %socket)))
 
-(defconstant +P_CONTROL_HARD_RESET_CLIENT_V2+ 7)
-(defconstant +P_CONTROL_HARD_RESET_SERVER_V2+ 8)
+(defun %parse-static-key (path)
+  (apply
+   #'concatenate 'vector
+   (with-open-file (s path)
+     (loop with collecting-p = nil
+           for line = (read-line s nil nil)
+           while line
+           when (string= line "-----END OpenVPN Static key V1-----")
+             do (setf collecting-p nil)
+           when collecting-p
+             collect (b64:base64-string-to-usb8-array line)
+           when (string= line "-----BEGIN OpenVPN Static key V1-----")
+             do (setf collecting-p t)))))
 
-(bin:defbinary %openvpn-control-header ()
-  (opcode 0 :type (unsigned-byte 8))
-  (session-id 0 :type (unsigned-byte 64) :byte-order :big-endian)
-  (packet-id 0 :type (unsigned-byte 32) :byte-order :big-endian))
-
-(bin:defbinary %openvpn-tlv ()
-  (length 0 :type (unsigned-byte 16) :byte-order :big-endian)
-  (value #() :type (simple-array (unsigned-byte 8) (length))))
-
-(defun %new-session-id ()
-  ;; Generate a random 64 bits integer that will be used to identify
-  ;; the ongoing session/connection.
-  (random (expt 2 64)))
-
-(defun %make-hard-reset-client-packet ()
-  (fs:with-output-to-sequence (out)
-    (bin:write-binary (make-%openvpn-control-header :opcode +P_CONTROL_HARD_RESET_CLIENT_V2+
-                                                    :session-id (%new-session-id)
-                                                    :packet-id 0)
-                      out)))
-
-(defun %read-packet-values (tlvs stream)
-  (let ((tlv (bin:read-binary '%openvpn-tlv stream)))
-    (if (not tlv)
-        tlvs
-        (%read-packet-values (append tlvs (list tlv)) stream))))
+(defmethod initialize-instance :after ((c openvpn-client) &key)
+  (setf (%client-ip-address c) (%string-ipv4-address-to-integer (client-ip c)))
+  (let ((static-key-binary-value (%parse-static-key (%static-key c))))
+    (setf (%cipher c) (ic:make-cipher :aes
+                                      :mode :cbc
+                                      :key (subseq static-key-binary-value 0 32)
+                                      :initialization-vector (ic:random-bits 128)))
+    (setf (%hmac c) (ic:make-hmac (subseq static-key-binary-value 64 96) :sha256))))
 
 (defmethod connect ((c openvpn-client))
   (setf (%socket c)
         (u:socket-connect (host c) (port c)
                           :protocol :datagram
-                          :element-type '(unsigned-byte 8)))
-
-  (let ((sock (%socket c))
-        (hard-reset-packet (%make-hard-reset-client-packet)))
-    (u:socket-send sock hard-reset-packet (length hard-reset-packet))
-
-    (let ((buffer (make-array 2048 :element-type '(unsigned-byte 8))))
-      (multiple-value-bind (hard-reset-server-packet length)
-          (u:socket-receive sock buffer 2048)
-        (fs:with-input-from-sequence (stream (subseq hard-reset-server-packet (1- length)))
-          (let ((hard-reset-server-packet (bin:read-binary '%openvpn-control-header stream))
-                (values (%read-packet-values (list) stream)))
-            (assert (= (getf hard-reset-server-packet :opcode) +P_CONTROL_HARD_RESET_SERVER_V2+))
-            (format t "header: ~a, values: ~a~%" hard-reset-server-packet values)))))))
+                          :element-type '(unsigned-byte 8))))
 
 (defmethod disconnect ((c openvpn-client))
   (socket-close (%socket c)))
+
+(defmethod ping ((c openvpn-client) dst-address)
+  (let* ((dst-ip (string-ipv4-address-to-integer dst-address))
+         (ipv4-icmp-packet (%make-ipv4-icmp-packet (%client-ip-address c)
+                                                   dst-ip)))
+    ;; use ironclad to encrypt this packet and then send UDP packets?
+    ))
