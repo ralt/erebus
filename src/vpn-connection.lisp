@@ -29,7 +29,9 @@
     (loop
       (multiple-value-bind (buffer size)
           (u:socket-receive (%socket c) nil nil)
-        (funcall (reader-callback c) buffer size)))))
+        (if (> size 0)
+            (ignore-errors (funcall (reader-callback c) buffer size))
+            (break))))))
 
 (defun %writer-loop (c)
   (lambda ()
