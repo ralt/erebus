@@ -22,16 +22,23 @@
   (lp.q:push-queue 'stop (%writer-queue c))
   (bt:join-thread (%writer-thread c))
   (u:socket-close (%socket c))
+  (bt:interrupt-thread (%reader-thread c) #'identity t)
   (bt:join-thread (%reader-thread c)))
 
 (defun %reader-loop (c)
   (lambda ()
-    (loop
-      (multiple-value-bind (buffer size)
-          (u:socket-receive (%socket c) nil 65507)
-        (if (> size 0)
-            (ignore-errors (funcall (reader-callback c) buffer size))
-            (break))))))
+    (block reader
+      (loop
+        (handler-case
+            (multiple-value-bind (buffer size)
+                (u:socket-receive (%socket c) nil 65507)
+              (when (= size 0)
+                (return-from reader))
+              (ignore-errors (funcall (reader-callback c) buffer size)))
+          (error (c)
+            (unless (eq (type-of c) 'u:bad-file-descriptor-error)
+              (format t "error in reader loop: ~a~%" c))
+            (return-from reader)))))))
 
 (defun %writer-loop (c)
   (lambda ()

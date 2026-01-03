@@ -68,7 +68,7 @@
            (key (icmp-packet-identifier (ipv4-icmp-packet-icmp-packet decrypted-ipv4-icmp-packet))))
       (bt:with-lock-held ((%connections-lock c))
         (let ((queue (gethash key (%connections c))))
-          (lp.q:push-queue nil queue))))))
+          (lp.q:push-queue/no-lock nil queue))))))
 
 (defconstant +P_DATA_V1+ 7)
 
@@ -76,7 +76,7 @@
   (opcode +P_DATA_V1+ :type (unsigned-byte 8))
   (packet-id 0 :type (unsigned-byte 32)))
 
-(defun %serialize-packet (c buffer)
+(defun %serialize-packet (c packet)
   (let* ((iv (%integer-to-octets (ic:random-bits 128) 16))
          (body (concatenate 'vector
                             (fs:with-output-to-sequence (s)
@@ -90,7 +90,10 @@
                                              :key (%cipher-key c)
                                              :padding :pkcs7
                                              :initialization-vector iv)
-                             buffer)))
+                             (coerce
+                              (fs:with-output-to-sequence (s)
+                                (bin:write-binary packet s))
+                              '(simple-array (unsigned-byte 8) (*))))))
          (hmac (ic:hmac-digest (%hmac c) :buffer body)))
     (concatenate 'vector body hmac)))
 
