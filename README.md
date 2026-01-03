@@ -111,7 +111,7 @@ The roadmap prioritizes incremental progress and interoperability over completen
 In order to help out during development, the `erebus/test` package provides a few helpers, most notably:
 
 - `(create-container NAME FOLDER VPN-LOCAL-PORT)`: creates a docker container `NAME` with the appropriate configuration later available in `FOLDER`, exposing its VPN port to `localhost:VPN-LOCAL-PORT`
-- `(prepare-container NAME)`: runs all the preparation steps for the openvpn server configuration
+- `(prepare-container NAME FOLDER)`: runs all the preparation steps for the openvpn server configuration
 - `(start-services NAME)`: starts openvpn and nginx
 - `(cleanup-container NAME FOLDER)`: cleanups the container and its folder
 
