@@ -37,8 +37,11 @@
                                            :port (port c)
                                            :reader-callback (%reader-callback c)))
   (let ((static-key-binary-value (%parse-static-key (%static-key c))))
-    (setf (%cipher-key c) (subseq static-key-binary-value 0 32))
-    (setf (%hmac c) (ic:make-hmac (subseq static-key-binary-value 64 96) :sha256))))
+    (setf (%cipher-key c) (coerce (subseq static-key-binary-value 0 32)
+                                  '(simple-array (unsigned-byte 8) (*))))
+    (setf (%hmac c) (ic:make-hmac (coerce (subseq static-key-binary-value 64 96)
+                                          '(simple-array (unsigned-byte 8) (*)))
+                                  :sha256))))
 
 (defmethod connect ((c openvpn-client-static-key))
   (connect (%vpn-connection c)))
@@ -83,10 +86,10 @@
                             iv
                             (ic:encrypt-message
                              (ic:make-cipher :aes
-                                  :mode :cbc
-                                  :key (%cipher-key c)
-                                  :padding :pkcs7
-                                  :initialization-vector iv)
+                                             :mode :cbc
+                                             :key (%cipher-key c)
+                                             :padding :pkcs7
+                                             :initialization-vector iv)
                              buffer)))
          (hmac (ic:hmac-digest (%hmac c) :buffer body)))
     (concatenate 'vector body hmac)))

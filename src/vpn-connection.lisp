@@ -19,7 +19,7 @@
   (setf (%writer-thread c) (bt:make-thread (%writer-loop c))))
 
 (defmethod disconnect ((c vpn-connection))
-  (lp.q:push-queue (%writer-queue c) 'stop)
+  (lp.q:push-queue 'stop (%writer-queue c))
   (bt:join-thread (%writer-thread c))
   (u:socket-close (%socket c))
   (bt:join-thread (%reader-thread c)))
@@ -28,18 +28,19 @@
   (lambda ()
     (loop
       (multiple-value-bind (buffer size)
-          (u:socket-receive (%socket c) nil nil)
+          (u:socket-receive (%socket c) nil 65507)
         (if (> size 0)
             (ignore-errors (funcall (reader-callback c) buffer size))
             (break))))))
 
 (defun %writer-loop (c)
   (lambda ()
-    (loop
-      (let ((item (lp.q:pop-queue (%writer-queue c))))
-        (when (eq item 'stop)
-          (break))
-        (u:socket-send (%socket c) item (length item))))))
+    (block writer
+      (loop
+        (let ((item (lp.q:pop-queue (%writer-queue c))))
+          (when (eq item 'stop)
+            (return-from writer))
+          (u:socket-send (%socket c) item (length item)))))))
 
 (defmethod send ((c vpn-connection) packet)
   (lp.q:push-queue packet (%writer-queue c)))

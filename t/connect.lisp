@@ -7,6 +7,7 @@
                           folder
                           vpn-local-port
                           (lambda (name folder)
+                            (declare (ignore folder))
                             (run-in-container
                              name
                              "cd /etc/openvpn
