@@ -15,8 +15,8 @@
                           :protocol :datagram
                           :element-type '(unsigned-byte 8)))
   (setf (%writer-queue c) (lp.q:make-queue))
-  (setf (%reader-thread c) (bt:make-thread (%reader-loop c)))
-  (setf (%writer-thread c) (bt:make-thread (%writer-loop c))))
+  (setf (%reader-thread c) (bt:make-thread (%reader-loop c) :name "reader thread"))
+  (setf (%writer-thread c) (bt:make-thread (%writer-loop c) :name "writer thread")))
 
 (defmethod disconnect ((c vpn-connection))
   (lp.q:push-queue 'stop (%writer-queue c))
@@ -34,8 +34,13 @@
                 (u:socket-receive (%socket c) nil 65507)
               (when (= size 0)
                 (return-from reader))
-              (ignore-errors (funcall (reader-callback c) buffer size)))
+              (handler-case
+                  (funcall (reader-callback c) buffer size)
+                (error (c)
+                  (format t "error in reader callback: ~a~%" c))))
           (error (c)
+            ;; this one is expected, this is what we get when we
+            ;; INTERRUPT-THREAD
             (unless (eq (type-of c) 'u:bad-file-descriptor-error)
               (format t "error in reader loop: ~a~%" c))
             (return-from reader)))))))
@@ -47,7 +52,10 @@
         (let ((item (lp.q:pop-queue (%writer-queue c))))
           (when (eq item 'stop)
             (return-from writer))
-          (u:socket-send (%socket c) item (length item)))))))
+          (handler-case
+              (u:socket-send (%socket c) item (length item))
+            (error (c)
+              (format t "error in writer loop: ~a~%" c))))))))
 
 (defmethod send ((c vpn-connection) packet)
   (lp.q:push-queue packet (%writer-queue c)))

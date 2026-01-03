@@ -17,9 +17,8 @@ rm -rf ccd/ crl.pem pki/ # delete those or ovpn_run will try to use them
 
 cat > /etc/openvpn/openvpn.conf <<EOF
 ifconfig 10.8.0.1 10.8.0.2
-verb 3
+verb 9
 keepalive 10 60
-persist-tun
 secret static.key
 cipher AES-256-CBC
 auth SHA256
