@@ -11,8 +11,13 @@
    (%client-ip-address :accessor %client-ip-address)
    (%static-key :initarg :static-key :reader %static-key :initform nil)
    (%cipher-key :accessor %cipher-key)
-   (%hmac :accessor %hmac)
+   (%hmac-key :accessor %hmac-key)
    (%socket :accessor %socket)))
+
+(defun %hex-string-to-byte-vector (str nb)
+  (let ((bytes (make-array nb :element-type '(unsigned-byte 8))))
+    (dotimes (i nb bytes)
+      (setf (elt bytes i) (parse-integer (subseq str (* i 2) (* (1+ i) 2)) :radix 16)))))
 
 (defun %parse-static-key (path)
   (apply
@@ -24,7 +29,7 @@
            when (string= line "-----END OpenVPN Static key V1-----")
              do (setf collecting-p nil)
            when collecting-p
-             collect (b64:base64-string-to-usb8-array line)
+             collect (%hex-string-to-byte-vector line 16)
            when (string= line "-----BEGIN OpenVPN Static key V1-----")
              do (setf collecting-p t)))))
 
@@ -39,9 +44,8 @@
   (let ((static-key-binary-value (%parse-static-key (%static-key c))))
     (setf (%cipher-key c) (coerce (subseq static-key-binary-value 0 32)
                                   '(simple-array (unsigned-byte 8) (*))))
-    (setf (%hmac c) (ic:make-hmac (coerce (subseq static-key-binary-value 128 160)
-                                          '(simple-array (unsigned-byte 8) (*)))
-                                  :sha256))))
+    (setf (%hmac-key c) (coerce (subseq static-key-binary-value 128 (+ 128 32))
+                                '(simple-array (unsigned-byte 8) (*))))))
 
 (defmethod connect ((c openvpn-client-static-key))
   (connect (%vpn-connection c)))
@@ -70,19 +74,24 @@
         (let ((queue (gethash key (%connections c))))
           (lp.q:push-queue nil queue))))))
 
-(defconstant +P_DATA_V1+ 6)
+(defconstant +P_DATA_V1+ 4)
 
 (bin:defbinary openvpn-packet-header (:byte-order :big-endian)
-  (opcode +P_DATA_V1+ :type (unsigned-byte 8))
-  (key-id 0 :type (unsigned-byte 8))
+  (opcode-key-id 0 :type (unsigned-byte 8))
   (packet-id 0 :type (unsigned-byte 32)))
+
+(defun make-opcode-key-id (opcode key-id)
+  (logior (ash opcode 4)
+          (logand key-id #x0f)))
 
 (defun %serialize-packet (c packet)
   (let* ((iv (%integer-to-octets (ic:random-bits 128) 16))
          (body (concatenate '(simple-array (unsigned-byte 8) (*))
                             (fs:with-output-to-sequence (s)
                               (bin:write-binary
-                               (make-openvpn-packet-header :packet-id (incf (%packet-id-counter c)))
+                               (make-openvpn-packet-header
+                                :opcode-key-id (make-opcode-key-id +P_DATA_V1+ 0)
+                                :packet-id (incf (%packet-id-counter c)))
                                s))
                             iv
                             (ic:encrypt-message
@@ -94,8 +103,9 @@
                              (coerce (fs:with-output-to-sequence (s)
                                        (bin:write-binary packet s))
                                      '(simple-array (unsigned-byte 8) (*))))))
-         (hmac (ic:hmac-digest (%hmac c) :buffer body)))
-    (concatenate '(simple-array (unsigned-byte 8) (*)) body hmac)))
+         (hmac (ic:make-hmac (%hmac-key c) :sha256)))
+    (ic:update-hmac hmac body)
+    (concatenate '(simple-array (unsigned-byte 8) (*)) body (ic:hmac-digest hmac))))
 
 (defun %deserialize-packet (c buffer size)
   (fs:with-input-from-sequence (s buffer)
@@ -103,17 +113,18 @@
       (assert (eq (openvpn-packet-header-opcode header) +P_DATA_V1+))
       ;; TODO: replay protection using packet-id?
       (let ((iv (make-array 16 :element-type '(unsigned-byte 8)))
-            (ciphertext (make-array (- size 6 16 32) :element-type '(unsigned-byte 8)))
-                                        ; 6 = header, 16 = IV, 32 = HMAC
+            (ciphertext (make-array (- size 5 16 32) :element-type '(unsigned-byte 8)))
+                                        ; 5 = header, 16 = IV, 32 = HMAC
             (hmac (make-array 32 :element-type '(unsigned-byte 8))))
         (read-sequence hmac s)
         (read-sequence iv s)
         (read-sequence ciphertext s)
 
-        (let* ((body (concatenate '(simple-array (unsigned-byte 8) (*))
-                                  (subseq buffer 0 (- size 32))))
-               (supposed-hmac (ic:hmac-digest (%hmac c) :buffer body)))
-          (assert (ic:constant-time-equal hmac supposed-hmac)))
+        (let ((body (concatenate '(simple-array (unsigned-byte 8) (*))
+                                 (subseq buffer 0 (- size 32))))
+              (supposed-hmac (ic:make-hmac (%hmac-key c) :sha256)))
+          (ic:update-hmac supposed-hmac body)
+          (assert (ic:constant-time-equal hmac (ic:hmac-digest supposed-hmac))))
 
         (let ((decrypted-packet (ic:decrypt-message
                                  (ic:make-cipher :aes

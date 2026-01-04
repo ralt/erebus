@@ -5,7 +5,6 @@
   :description "Rootless IPSec userspace proxy"
   :depends-on (:usocket
                :lisp-binary
-               :cl-base64
                :ironclad
                :flexi-streams
                :uiop
