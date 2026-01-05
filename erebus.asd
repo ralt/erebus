@@ -9,11 +9,13 @@
                :flexi-streams
                :uiop
                :bordeaux-threads
-               :lparallel)
+               :lparallel
+               :local-time)
   :in-order-to ((test-op (test-op :erebus/test)))
   :components ((:module "src"
                 :serial t
                 :components ((:file "package")
+                             (:file "types")
                              (:file "ip")
                              (:file "vpn-connection")
                              (:file "openvpn")

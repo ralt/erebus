@@ -15,13 +15,13 @@
    (%socket :accessor %socket)))
 
 (defun %hex-string-to-byte-vector (str nb)
-  (let ((bytes (make-array nb :element-type '(unsigned-byte 8))))
+  (let ((bytes (make-array nb :element-type 'octet)))
     (dotimes (i nb bytes)
       (setf (elt bytes i) (parse-integer (subseq str (* i 2) (* (1+ i) 2)) :radix 16)))))
 
 (defun %parse-static-key (path)
   (apply
-   #'concatenate '(simple-array (unsigned-byte 8) (*))
+   #'concatenate 'octet-vector
    (with-open-file (s path)
      (loop with collecting-p = nil
            for line = (read-line s nil nil)
@@ -76,48 +76,49 @@
 
 (bin:defbinary openvpn-packet-header (:byte-order :big-endian)
   (opcode +P_DATA_V1+ :type (unsigned-byte 4))
-  (key-id 0 :type (unsigned-byte 4))
-  (packet-id 0 :type (unsigned-byte 32)))
+  (key-id 0 :type (unsigned-byte 4)))
+
+(bin:defbinary openvpn-packet-id (:byte-order :big-endian)
+  (packet-id 0 :type (unsigned-byte 32))
+  (timestamp 0 :type (unsigned-byte 32)))
 
 (defconstant +iv-length-aes-cbc+ 16)
 
 (defun %serialize-packet (c packet)
   (let* ((iv (%integer-to-octets (ic:random-bits (* +iv-length-aes-cbc+ 8)) +iv-length-aes-cbc+))
-         (body (concatenate '(simple-array (unsigned-byte 8) (*))
-                            (fs:with-output-to-sequence (s)
-                              (bin:write-binary
-                               (make-openvpn-packet-header :packet-id (incf (%packet-id-counter c)))
-                               s))
-                            iv
-                            (ic:encrypt-message
-                             (ic:make-cipher :aes
-                                             :mode :cbc
-                                             :key (%cipher-key c)
-                                             :padding :pkcs7
-                                             :initialization-vector iv)
-                             (coerce (fs:with-output-to-sequence (s)
-                                       (bin:write-binary packet s))
-                                     '(simple-array (unsigned-byte 8) (*))))))
+         (header (fs:with-output-to-sequence (s)
+                   (bin:write-binary (make-openvpn-packet-header) s)))
+         (ciphertext (ic:encrypt-message
+                      (ic:make-cipher :aes
+                                      :mode :cbc
+                                      :key (%cipher-key c)
+                                      :padding :pkcs7
+                                      :initialization-vector iv)
+                      (coerce (fs:with-output-to-sequence (s)
+                                (bin:write-binary (make-openvpn-packet-id
+                                                   :packet-id (incf (%packet-id-counter c))
+                                                   :timestamp (lt:timestamp-to-unix (lt:now)))
+                                                  s)
+                                (bin:write-binary packet s))
+                              'octet-vector)))
          (hmac (ic:make-hmac (%hmac-key c) :sha256)))
-    (ic:update-hmac hmac body)
-    (concatenate '(simple-array (unsigned-byte 8) (*)) body (ic:hmac-digest hmac))))
+    (ic:update-hmac hmac (concatenate 'octet-vector iv ciphertext))
+    (concatenate 'octet-vector header (ic:hmac-digest hmac) iv ciphertext)))
 
 (defun %deserialize-packet (c buffer size)
   (fs:with-input-from-sequence (s buffer)
     (let ((header (bin:read-binary 'openvpn-packet-header s)))
       (assert (eq (openvpn-packet-header-opcode header) +P_DATA_V1+))
-      ;; TODO: replay protection using packet-id?
-      (let ((iv (make-array 16 :element-type '(unsigned-byte 8)))
-            (ciphertext (make-array (- size 5 +iv-length-aes-cbc+ 32)
-                                        ; 5 = header, 16 = IV, 32 = HMAC
-                                    :element-type '(unsigned-byte 8)))
-            (hmac (make-array 32 :element-type '(unsigned-byte 8))))
+      (let ((iv (make-array 16 :element-type 'octet))
+            (ciphertext (make-array (- size 1 32 +iv-length-aes-cbc+)
+                                        ; 1 = header, 16 = IV, 32 = HMAC
+                                    :element-type 'octet))
+            (hmac (make-array 32 :element-type 'octet)))
         (read-sequence hmac s)
         (read-sequence iv s)
         (read-sequence ciphertext s)
 
-        (let ((body (concatenate '(simple-array (unsigned-byte 8) (*))
-                                 (subseq buffer 0 (- size 32)))) ; remove HMAC key
+        (let ((body (concatenate 'octet-vector (subseq buffer 0 (- size 32)))) ; remove HMAC key
               (supposed-hmac (ic:make-hmac (%hmac-key c) :sha256)))
           (ic:update-hmac supposed-hmac body)
           (assert (ic:constant-time-equal hmac (ic:hmac-digest supposed-hmac))))
@@ -130,8 +131,9 @@
                                                  :initialization-vector iv)
                                  ciphertext)))
           (fs:with-input-from-sequence (p decrypted-packet)
+            (bin:read-binary 'openvpn-packet-id p) ; discard replay protection for now
             (bin:read-binary 'ipv4-icmp-packet p)))))))
 
 (defun %integer-to-octets (n size)
-  (let ((buffer (make-array size :element-type '(unsigned-byte 8))))
+  (let ((buffer (make-array size :element-type 'octet)))
     (u:integer-to-octet-buffer n buffer size)))

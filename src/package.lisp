@@ -5,7 +5,8 @@
                     (#:ic #:ironclad)
                     (#:fs #:flexi-streams)
                     (#:bt #:bordeaux-threads)
-                    (#:lp.q #:lparallel.queue))
+                    (#:lp.q #:lparallel.queue)
+                    (#:lt #:local-time))
   (:export #:connect
            #:ping
            #:disconnect
