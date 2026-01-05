@@ -42,5 +42,5 @@ EOF
                                                       :directory (pathname-directory folder)))))
       (connect openvpn-client)
       (unwind-protect
-           (ping openvpn-client "10.0.0.1")
+           (ping openvpn-client "10.8.0.1")
         (disconnect openvpn-client)))))

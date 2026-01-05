@@ -21,7 +21,7 @@
 
 (defun %parse-static-key (path)
   (apply
-   #'concatenate 'vector
+   #'concatenate '(simple-array (unsigned-byte 8) (*))
    (with-open-file (s path)
      (loop with collecting-p = nil
            for line = (read-line s nil nil)
@@ -42,10 +42,8 @@
                                            :port (port c)
                                            :reader-callback (%reader-callback c)))
   (let ((static-key-binary-value (%parse-static-key (%static-key c))))
-    (setf (%cipher-key c) (coerce (subseq static-key-binary-value 0 32)
-                                  '(simple-array (unsigned-byte 8) (*))))
-    (setf (%hmac-key c) (coerce (subseq static-key-binary-value 128 (+ 128 32))
-                                '(simple-array (unsigned-byte 8) (*))))))
+    (setf (%cipher-key c) (subseq static-key-binary-value 0 32))
+    (setf (%hmac-key c) (subseq static-key-binary-value 64 (+ 64 32)))))
 
 (defmethod connect ((c openvpn-client-static-key))
   (connect (%vpn-connection c)))
@@ -77,21 +75,16 @@
 (defconstant +P_DATA_V1+ 4)
 
 (bin:defbinary openvpn-packet-header (:byte-order :big-endian)
-  (opcode-key-id 0 :type (unsigned-byte 8))
+  (opcode +P_DATA_V1+ :type (unsigned-byte 4))
+  (key-id 0 :type (unsigned-byte 4))
   (packet-id 0 :type (unsigned-byte 32)))
-
-(defun make-opcode-key-id (opcode key-id)
-  (logior (ash opcode 4)
-          (logand key-id #x0f)))
 
 (defun %serialize-packet (c packet)
   (let* ((iv (%integer-to-octets (ic:random-bits 128) 16))
          (body (concatenate '(simple-array (unsigned-byte 8) (*))
                             (fs:with-output-to-sequence (s)
                               (bin:write-binary
-                               (make-openvpn-packet-header
-                                :opcode-key-id (make-opcode-key-id +P_DATA_V1+ 0)
-                                :packet-id (incf (%packet-id-counter c)))
+                               (make-openvpn-packet-header :packet-id (incf (%packet-id-counter c)))
                                s))
                             iv
                             (ic:encrypt-message
