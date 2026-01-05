@@ -33,15 +33,30 @@
                     :output t
                     :error-output t))
 
-(defun prepare-container (name)
+(defun prepare-container (name folder)
   (uiop:run-program
    (format nil "docker start ~a" name)
    :output t
    :error-output t)
-  (run-in-container name "ovpn_genconfig -u udp://erebus.local")
-  (run-in-container name "ovpn_initpki nopass")
-  (run-in-container name "easyrsa build-client-full erebus nopass")
-  (run-in-container name "ovpn_getclient erebus > /etc/openvpn/erebus.ovpn"))
+  (copy-recursively (merge-pathnames "t/fixtures/openvpn/" (asdf:system-source-directory :erebus/test))
+                    folder))
+
+(defun copy-recursively (input output)
+  (dolist (path (directory
+                 (make-pathname :directory (pathname-directory input)
+                                :name :wild
+                                :type :wild)))
+    (if (pathname-name path)
+        (uiop:copy-file path (merge-pathnames (make-pathname :name (pathname-name path)
+                                                             :type (pathname-type path))
+                                              output))
+        (let ((new-folder (merge-pathnames (make-pathname
+                                            :directory (list
+                                                        :relative
+                                                        (first (last (pathname-directory path)))))
+                                           output)))
+          (ensure-directories-exist new-folder)
+          (copy-recursively path new-folder)))))
 
 (defun start-services (name)
   (run-in-container name "mkdir -p /run/nginx && nginx && nohup ovpn_run &"))
@@ -94,7 +109,7 @@
          (unwind-protect
               (progn
                 (create-container ,container-name ,container-folder ,vpn-local-port)
-                (prepare-container ,container-name)
+                (prepare-container ,container-name ,container-folder)
                 (funcall ,prepare-hook ,container-name ,container-folder)
                 (start-services ,container-name)
 

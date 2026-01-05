@@ -2,6 +2,12 @@
   (:use #:cl)
   (:local-nicknames (#:bin #:lisp-binary)
                     (#:u #:usocket)
-                    (#:fs #:flexi-streams)))
-
-(in-package #:erebus)
+                    (#:ic #:ironclad)
+                    (#:fs #:flexi-streams)
+                    (#:bt #:bordeaux-threads)
+                    (#:lp.q #:lparallel.queue)
+                    (#:lt #:local-time))
+  (:export #:connect
+           #:ping
+           #:disconnect
+           #:openvpn-client-static-key))

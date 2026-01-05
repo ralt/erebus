@@ -3,24 +3,33 @@
   :license "GPLv2"
   :author "Florian Margaine <florian@margaine.com>"
   :description "Rootless IPSec userspace proxy"
-  :depends-on (:uiop
-               :alexandria
-               :usocket
+  :depends-on (:usocket
                :lisp-binary
-               :flexi-streams)
+               :ironclad
+               :flexi-streams
+               :uiop
+               :bordeaux-threads
+               :lparallel
+               :local-time)
   :in-order-to ((test-op (test-op :erebus/test)))
   :components ((:module "src"
                 :serial t
                 :components ((:file "package")
+                             (:file "types")
+                             (:file "ip")
+                             (:file "vpn-connection")
                              (:file "openvpn")
                              (:file "main")))))
 
 (defsystem erebus/test
-  :depends-on (:fiveam)
+  :depends-on (:erebus
+               :fiveam
+               :alexandria)
   :components ((:module "t"
                 :serial t
                 :components ((:file "package")
-                             (:file "connect"))))
+                             (:file "connect")
+                             (:file "openvpn-statickey"))))
   :perform (test-op (op c)
                     (symbol-call :fiveam :run!
                                  (find-symbol* :erebus :erebus/test))))
