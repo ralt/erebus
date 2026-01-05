@@ -72,22 +72,15 @@
         (let ((queue (gethash key (%connections c))))
           (lp.q:push-queue nil queue))))))
 
-(defconstant +P_DATA_V1+ 4)
-
-(bin:defbinary openvpn-packet-header (:byte-order :big-endian)
-  (opcode +P_DATA_V1+ :type (unsigned-byte 4))
-  (key-id 0 :type (unsigned-byte 4)))
-
 (bin:defbinary openvpn-packet-id (:byte-order :big-endian)
   (packet-id 0 :type (unsigned-byte 32))
   (timestamp 0 :type (unsigned-byte 32)))
 
 (defconstant +iv-length-aes-cbc+ 16)
+(defconstant +NO_COMPRESS_BYTE+ #xFA)
 
 (defun %serialize-packet (c packet)
   (let* ((iv (%integer-to-octets (ic:random-bits (* +iv-length-aes-cbc+ 8)) +iv-length-aes-cbc+))
-         (header (fs:with-output-to-sequence (s)
-                   (bin:write-binary (make-openvpn-packet-header) s)))
          (ciphertext (ic:encrypt-message
                       (ic:make-cipher :aes
                                       :mode :cbc
@@ -99,11 +92,12 @@
                                                    :packet-id (incf (%packet-id-counter c))
                                                    :timestamp (lt:timestamp-to-unix (lt:now)))
                                                   s)
+                                (write-byte +NO_COMPRESS_BYTE+ s)
                                 (bin:write-binary packet s))
                               'octet-vector)))
          (hmac (ic:make-hmac (%hmac-key c) :sha256)))
     (ic:update-hmac hmac (concatenate 'octet-vector iv ciphertext))
-    (concatenate 'octet-vector header (ic:hmac-digest hmac) iv ciphertext)))
+    (concatenate 'octet-vector (ic:hmac-digest hmac) iv ciphertext)))
 
 (defun %deserialize-packet (c buffer size)
   (fs:with-input-from-sequence (s buffer)
