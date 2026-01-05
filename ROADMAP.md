@@ -5,7 +5,7 @@ Each phase is intended to produce a working, testable system before moving on to
 
 The focus is on **progressive capability**, not completeness.
 
-## Phase 1 — OpenVPN static key, minimal implementation
+## ✅ Phase 1 — OpenVPN static key, minimal implementation
 
 Goal: implement the simplest possible OpenVPN-compatible client using a pre-shared static key.
 
@@ -14,7 +14,6 @@ Scope:
 * OpenVPN static-key mode
 * No control channel
 * No TLS
-* `P_DATA_V1` packets only
 
 Key tasks:
 
@@ -24,7 +23,7 @@ Key tasks:
   * packet ID counter
   * AES encryption
   * HMAC authentication
-* Serialize and deserialize `P_DATA_V1`
+* Serialize and deserialize
 * Interoperate with a minimal OpenVPN server in static-key mode
 * Exchange raw payload bytes successfully
 
@@ -39,6 +38,7 @@ Goal: make the OpenVPN client transport-agnostic early.
 
 Scope:
 
+* Support a configuration file
 * Support both UDP and TCP transport modes
 * Static-key mode only
 * Identical packet logic across transports
@@ -60,14 +60,6 @@ Outcome:
 
 * One OpenVPN implementation that can switch between UDP and TCP
 * No protocol logic duplicated between transports
-
-Good catch — you’re right, Phase 3 is really about **embedding a TCP/IP stack inside the VPN payload**, not about “rootless” as a goal in itself. The rootless aspect is a consequence, not the focus.
-
-Below is a **clean rewording of Phase 3 only**, keeping the rest of the roadmap unchanged and consistent in tone.
-
-You can replace just that section in your `ROADMAP.md`.
-
----
 
 ## Phase 3 — Embedded TCP/IP stack over VPN traffic
 
