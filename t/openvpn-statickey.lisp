@@ -26,6 +26,7 @@ auth SHA256
 proto udp
 port 1194
 dev tun0
+persist-tun
 status /tmp/openvpn-status.log
 log /etc/openvpn/openvpn.log
 user nobody
@@ -42,5 +43,7 @@ EOF
                                                       :directory (pathname-directory folder)))))
       (connect openvpn-client)
       (unwind-protect
-           (ping openvpn-client "10.8.0.1")
+           (progn
+             (ping openvpn-client "10.8.0.1")
+             (is (= 1 1))) ; if we reach here, it means we didn't raise nor blocked
         (disconnect openvpn-client)))))
