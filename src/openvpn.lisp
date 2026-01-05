@@ -79,8 +79,10 @@
   (key-id 0 :type (unsigned-byte 4))
   (packet-id 0 :type (unsigned-byte 32)))
 
+(defconstant +iv-length-aes-cbc+ 16)
+
 (defun %serialize-packet (c packet)
-  (let* ((iv (%integer-to-octets (ic:random-bits 128) 16))
+  (let* ((iv (%integer-to-octets (ic:random-bits (* +iv-length-aes-cbc+ 8)) +iv-length-aes-cbc+))
          (body (concatenate '(simple-array (unsigned-byte 8) (*))
                             (fs:with-output-to-sequence (s)
                               (bin:write-binary
@@ -106,15 +108,16 @@
       (assert (eq (openvpn-packet-header-opcode header) +P_DATA_V1+))
       ;; TODO: replay protection using packet-id?
       (let ((iv (make-array 16 :element-type '(unsigned-byte 8)))
-            (ciphertext (make-array (- size 5 16 32) :element-type '(unsigned-byte 8)))
+            (ciphertext (make-array (- size 5 +iv-length-aes-cbc+ 32)
                                         ; 5 = header, 16 = IV, 32 = HMAC
+                                    :element-type '(unsigned-byte 8)))
             (hmac (make-array 32 :element-type '(unsigned-byte 8))))
         (read-sequence hmac s)
         (read-sequence iv s)
         (read-sequence ciphertext s)
 
         (let ((body (concatenate '(simple-array (unsigned-byte 8) (*))
-                                 (subseq buffer 0 (- size 32))))
+                                 (subseq buffer 0 (- size 32)))) ; remove HMAC key
               (supposed-hmac (ic:make-hmac (%hmac-key c) :sha256)))
           (ic:update-hmac supposed-hmac body)
           (assert (ic:constant-time-equal hmac (ic:hmac-digest supposed-hmac))))
