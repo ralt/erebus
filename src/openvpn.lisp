@@ -101,32 +101,30 @@
 
 (defun %deserialize-packet (c buffer size)
   (fs:with-input-from-sequence (s buffer)
-    (let ((header (bin:read-binary 'openvpn-packet-header s)))
-      (assert (eq (openvpn-packet-header-opcode header) +P_DATA_V1+))
-      (let ((iv (make-array 16 :element-type 'octet))
-            (ciphertext (make-array (- size 1 32 +iv-length-aes-cbc+)
-                                        ; 1 = header, 16 = IV, 32 = HMAC
-                                    :element-type 'octet))
-            (hmac (make-array 32 :element-type 'octet)))
-        (read-sequence hmac s)
-        (read-sequence iv s)
-        (read-sequence ciphertext s)
+    (let ((hmac (make-array 32 :element-type 'octet))
+          (iv (make-array 16 :element-type 'octet))
+          (ciphertext (make-array (- size +iv-length-aes-cbc+ 32) ; 16 = IV, 32 = HMAC
+                                  :element-type 'octet)))
+      (read-sequence hmac s)
+      (read-sequence iv s)
+      (read-sequence ciphertext s)
 
-        (let ((body (concatenate 'octet-vector (subseq buffer 0 (- size 32)))) ; remove HMAC key
-              (supposed-hmac (ic:make-hmac (%hmac-key c) :sha256)))
-          (ic:update-hmac supposed-hmac body)
-          (assert (ic:constant-time-equal hmac (ic:hmac-digest supposed-hmac))))
+      (let ((body (concatenate 'octet-vector iv ciphertext))
+            (supposed-hmac (ic:make-hmac (%hmac-key c) :sha256)))
+        (ic:update-hmac supposed-hmac body)
+        (assert (ic:constant-time-equal hmac (ic:hmac-digest supposed-hmac))))
 
-        (let ((decrypted-packet (ic:decrypt-message
-                                 (ic:make-cipher :aes
-                                                 :mode :cbc
-                                                 :key (%cipher-key c)
-                                                 :padding :pkcs7
-                                                 :initialization-vector iv)
-                                 ciphertext)))
-          (fs:with-input-from-sequence (p decrypted-packet)
-            (bin:read-binary 'openvpn-packet-id p) ; discard replay protection for now
-            (bin:read-binary 'ipv4-icmp-packet p)))))))
+      (let ((decrypted-packet (ic:decrypt-message
+                               (ic:make-cipher :aes
+                                               :mode :cbc
+                                               :key (%cipher-key c)
+                                               :padding :pkcs7
+                                               :initialization-vector iv)
+                               ciphertext)))
+        (fs:with-input-from-sequence (p decrypted-packet)
+          (bin:read-binary 'openvpn-packet-id p) ; discard replay protection for now
+          (read-byte p) ; compression byte, ignore for now
+          (bin:read-binary 'ipv4-icmp-packet p))))))
 
 (defun %integer-to-octets (n size)
   (let ((buffer (make-array size :element-type 'octet)))
