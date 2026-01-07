@@ -6,18 +6,21 @@
    (client-ip :initarg :client-ip :reader client-ip)
    (cipher :initarg :cipher :reader cipher)
    (auth :initarg :auth :reader auth)
+   (secret :initarg :secret :reader secret)
+   (key-direction :initarg :key-direction :reader key-direction :initform nil)
    (%vpn-connection :accessor %vpn-connection)
    (%packet-id-counter :accessor %packet-id-counter :initform 0)
    (%connections :accessor %connections)
    (%connections-lock :accessor %connections-lock)
    (%client-ip-address :accessor %client-ip-address)
-   (%static-key :initarg :static-key :reader %static-key :initform nil)
    (%cipher-type :accessor %cipher-type)
    (%cipher-mode :accessor %cipher-mode)
-   (%cipher-key :accessor %cipher-key)
+   (%cipher-encrypt-key :accessor %cipher-encrypt-key)
+   (%cipher-decrypt-key :accessor %cipher-decrypt-key)
    (%cipher-block-length :accessor %cipher-block-length)
    (%hmac-type :accessor %hmac-type)
-   (%hmac-key :accessor %hmac-key)
+   (%hmac-encrypt-key :accessor %hmac-encrypt-key)
+   (%hmac-decrypt-key :accessor %hmac-decrypt-key)
    (%hmac-length :accessor %hmac-length)
    (%socket :accessor %socket)))
 
@@ -76,7 +79,18 @@
                                            :host (host c)
                                            :port (port c)
                                            :reader-callback (%reader-callback c)))
-  (let ((hmac-type (cdr (assoc (auth c) *digests* :test #'string=))))
+  (let* ((hmac-type (cdr (assoc (auth c) *digests* :test #'string=)))
+         (parts (uiop:split-string (secret c)))
+         (secret-path (first parts))
+         (key-direction (if (= (length parts) 2)
+                            (let ((direction (parse-integer (second parts))))
+                              (cond ((= direction 0) :normal)
+                                    ((= direction 1) :inverse)))
+                            (if (key-direction c)
+                                (let ((direction (parse-integer (key-direction c))))
+                                  (cond ((= direction 0) :normal)
+                                        ((= direction 1) :inverse)))
+                                :bidirectional))))
     (setf (%hmac-type c) hmac-type)
     (multiple-value-bind (type key-size mode)
         (%parse-cipher (cipher c))
@@ -85,10 +99,35 @@
       (setf (%cipher-block-length c) (ic:block-length type))
       (setf (%hmac-length c) (ic:digest-length hmac-type))
 
-      (let ((static-key-binary-value (%parse-static-key (%static-key c))))
-        (setf (%cipher-key c) (subseq static-key-binary-value 0 (/ key-size 8)))
-        (setf (%hmac-key c)
-              (subseq static-key-binary-value 64 (+ 64 (%hmac-length c))))))))
+      (let ((static-key-binary-value (%parse-static-key secret-path))
+            (cipher-encrypt-start (cond ((eq key-direction :bidirectional) 0)
+                                        ((eq key-direction :normal) 0)
+                                        ((eq key-direction :inverse) 128)))
+            (cipher-decrypt-start (cond ((eq key-direction :bidirectional) 0)
+                                        ((eq key-direction :normal) 128)
+                                        ((eq key-direction :inverse) 0)))
+            (hmac-encrypt-start (cond ((eq key-direction :bidirectional) 64)
+                                        ((eq key-direction :normal) 64)
+                                        ((eq key-direction :inverse) 192)))
+            (hmac-decrypt-start (cond ((eq key-direction :bidirectional) 64)
+                                      ((eq key-direction :normal) 192)
+                                      ((eq key-direction :inverse) 64))))
+        (setf (%cipher-encrypt-key c)
+              (subseq static-key-binary-value
+                      cipher-encrypt-start
+                      (+ cipher-encrypt-start (/ key-size 8))))
+        (setf (%cipher-decrypt-key c)
+              (subseq static-key-binary-value
+                      cipher-decrypt-start
+                      (+ cipher-decrypt-start (/ key-size 8))))
+        (setf (%hmac-encrypt-key c)
+              (subseq static-key-binary-value
+                      hmac-encrypt-start
+                      (+ hmac-encrypt-start (%hmac-length c))))
+        (setf (%hmac-decrypt-key c)
+              (subseq static-key-binary-value
+                      hmac-decrypt-start
+                      (+ hmac-decrypt-start (%hmac-length c))))))))
 
 (defmethod connect ((c openvpn-client-static-key))
   (connect (%vpn-connection c)))
@@ -129,7 +168,7 @@
          (ciphertext (ic:encrypt-message
                       (ic:make-cipher (%cipher-type c)
                                       :mode (%cipher-mode c)
-                                      :key (%cipher-key c)
+                                      :key (%cipher-encrypt-key c)
                                       :padding :pkcs7
                                       :initialization-vector iv)
                       (coerce (fs:with-output-to-sequence (s)
@@ -140,7 +179,7 @@
                                 (write-byte +NO_COMPRESS_BYTE+ s)
                                 (bin:write-binary packet s))
                               'octet-vector)))
-         (hmac (ic:make-hmac (%hmac-key c) (%hmac-type c))))
+         (hmac (ic:make-hmac (%hmac-encrypt-key c) (%hmac-type c))))
     (ic:update-hmac hmac (concatenate 'octet-vector iv ciphertext))
     (concatenate 'octet-vector (ic:hmac-digest hmac) iv ciphertext)))
 
@@ -155,14 +194,14 @@
       (read-sequence ciphertext s)
 
       (let ((body (concatenate 'octet-vector iv ciphertext))
-            (supposed-hmac (ic:make-hmac (%hmac-key c) (%hmac-type c))))
+            (supposed-hmac (ic:make-hmac (%hmac-decrypt-key c) (%hmac-type c))))
         (ic:update-hmac supposed-hmac body)
         (assert (ic:constant-time-equal hmac (ic:hmac-digest supposed-hmac))))
 
       (let ((decrypted-packet (ic:decrypt-message
                                (ic:make-cipher (%cipher-type c)
                                                :mode (%cipher-mode c)
-                                               :key (%cipher-key c)
+                                               :key (%cipher-decrypt-key c)
                                                :padding :pkcs7
                                                :initialization-vector iv)
                                ciphertext)))

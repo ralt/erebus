@@ -18,19 +18,18 @@
       (cli:print-usage command t)))
   (let ((config (ini:parse-ini (cli:getopt command :config))))
     (cond ((ini:ini-value config :host :section :openvpn-server)
-           (let ((mode (or (ini:ini-value config :mode :section :openvpn-server)
-                           "static-key")))
-             (unless (string= mode "static-key")
+           (let ((secret (ini:ini-value config :secret :section :openvpn-server)))
+             (unless secret
                (return-from cli-handler
-                 (format t "only static-key mode is supported at the moment")))
+                 (format t "only static key mode is supported at the moment")))
              (let ((client
                      (make-instance
                       'openvpn-client-static-key
                       :host (ini:ini-value config :host :section :openvpn-server)
                       :port (ini:ini-value config :port :section :openvpn-server)
                       :client-ip (ini:ini-value config :client-ip :section :erebus)
-                      :static-key (pathname
-                                   (ini:ini-value config :static-key :section :openvpn-server))
+                      :secret (ini:ini-value config :secret :section :openvpn-server)
+                      :key-direction (ini:ini-value config :key-direction :section :openvpn-server)
                       :cipher (ini:ini-value config :cipher :section :openvpn-server)
                       :auth (ini:ini-value config :auth :section :openvpn-server))))
                (connect client)
