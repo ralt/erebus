@@ -31,7 +31,8 @@
                       :client-ip (ini:ini-value config :client-ip :section :openvpn-server)
                       :static-key (pathname
                                    (ini:ini-value config :static-key :section :openvpn-server))
-                      :cipher (ini:ini-value config :cipher :section :openvpn-server))))
+                      :cipher (ini:ini-value config :cipher :section :openvpn-server)
+                      :auth (ini:ini-value config :auth :section :openvpn-server))))
                (connect client)
                (unwind-protect
                     (sleep #xffff)
