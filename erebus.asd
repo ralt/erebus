@@ -21,7 +21,10 @@
                              (:file "ip")
                              (:file "vpn-connection")
                              (:file "openvpn")
-                             (:file "main")))))
+                             (:file "main"))))
+  :build-operation "program-op"
+  :build-pathname "erebus"
+  :entry-point "erebus::main")
 
 (defsystem erebus/test
   :depends-on (:erebus
