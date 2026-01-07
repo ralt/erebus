@@ -4,12 +4,15 @@
   ((host :initarg :host :reader host)
    (port :initarg :port :reader port)
    (client-ip :initarg :client-ip :reader client-ip)
+   (cipher :initarg :cipher :reader cipher)
    (%vpn-connection :accessor %vpn-connection)
    (%packet-id-counter :accessor %packet-id-counter :initform 0)
    (%connections :accessor %connections)
    (%connections-lock :accessor %connections-lock)
    (%client-ip-address :accessor %client-ip-address)
    (%static-key :initarg :static-key :reader %static-key :initform nil)
+   (%cipher-type :accessor %cipher-type)
+   (%cipher-mode :accessor %cipher-mode)
    (%cipher-key :accessor %cipher-key)
    (%hmac-key :accessor %hmac-key)
    (%socket :accessor %socket)))
@@ -33,6 +36,17 @@
            when (string= line "-----BEGIN OpenVPN Static key V1-----")
              do (setf collecting-p t)))))
 
+(defvar *ciphers* '(("AES" . :aes)
+                    ("ARIA" . :aria)
+                    ("CAMELLIA" . :camellia)))
+(defvar *cipher-modes* '(("CBC" . :cbc)))
+
+(defun %parse-cipher (cipher)
+  (let ((parts (uiop:split-string cipher :separator '(#\-))))
+    (values (cdr (assoc (first parts) *ciphers* :test #'string=))
+            (parse-integer (second parts))
+            (cdr (assoc (third parts) *cipher-modes* :test #'string=)))))
+
 (defmethod initialize-instance :after ((c openvpn-client-static-key) &key)
   (setf (%client-ip-address c) (string-ipv4-address-to-integer (client-ip c)))
   (setf (%connections c) (make-hash-table))
@@ -41,9 +55,14 @@
                                            :host (host c)
                                            :port (port c)
                                            :reader-callback (%reader-callback c)))
-  (let ((static-key-binary-value (%parse-static-key (%static-key c))))
-    (setf (%cipher-key c) (subseq static-key-binary-value 0 32))
-    (setf (%hmac-key c) (subseq static-key-binary-value 64 (+ 64 32)))))
+  (multiple-value-bind (type key-size mode)
+      (%parse-cipher (cipher c))
+    (setf (%cipher-type c) type)
+    (setf (%cipher-mode c) mode)
+
+    (let ((static-key-binary-value (%parse-static-key (%static-key c))))
+      (setf (%cipher-key c) (subseq static-key-binary-value 0 (* key-size 8)))
+      (setf (%hmac-key c) (subseq static-key-binary-value 64 (+ 64 32))))))
 
 (defmethod connect ((c openvpn-client-static-key))
   (connect (%vpn-connection c)))
@@ -82,8 +101,8 @@
 (defun %serialize-packet (c packet)
   (let* ((iv (%integer-to-octets (random #xffffffffffffffff) +iv-length-aes-cbc+))
          (ciphertext (ic:encrypt-message
-                      (ic:make-cipher :aes
-                                      :mode :cbc
+                      (ic:make-cipher (%cipher-type c)
+                                      :mode (%cipher-mode c)
                                       :key (%cipher-key c)
                                       :padding :pkcs7
                                       :initialization-vector iv)
@@ -115,8 +134,8 @@
         (assert (ic:constant-time-equal hmac (ic:hmac-digest supposed-hmac))))
 
       (let ((decrypted-packet (ic:decrypt-message
-                               (ic:make-cipher :aes
-                                               :mode :cbc
+                               (ic:make-cipher (%cipher-type c)
+                                               :mode (%cipher-mode c)
                                                :key (%cipher-key c)
                                                :padding :pkcs7
                                                :initialization-vector iv)

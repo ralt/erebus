@@ -18,18 +18,24 @@
       (cli:print-usage command t)))
   (let ((config (ini:parse-ini (cli:getopt command :config))))
     (cond ((ini:ini-value config :host :section :openvpn-server)
-           (let ((client
-                   (make-instance
-                    'openvpn-client-static-key
-                    :host (ini:ini-value config :host :section :openvpn-server)
-                    :port (ini:ini-value config :port :section :openvpn-server)
-                    :client-ip (ini:ini-value config :client-ip :section :openvpn-server)
-                    :static-key (pathname
-                                 (ini:ini-value config :static-key :section :openvpn-server)))))
-             (connect client)
-             (unwind-protect
-                  (sleep #xffff)
-               (disconnect client)))))))
+           (let ((mode (or (ini:ini-value config :mode :section :openvpn-server)
+                           "static-key")))
+             (unless (string= mode "static-key")
+               (return-from cli-handler
+                 (format t "only static-key mode is supported at the moment")))
+             (let ((client
+                     (make-instance
+                      'openvpn-client-static-key
+                      :host (ini:ini-value config :host :section :openvpn-server)
+                      :port (ini:ini-value config :port :section :openvpn-server)
+                      :client-ip (ini:ini-value config :client-ip :section :openvpn-server)
+                      :static-key (pathname
+                                   (ini:ini-value config :static-key :section :openvpn-server))
+                      :cipher (ini:ini-value config :cipher :section :openvpn-server))))
+               (connect client)
+               (unwind-protect
+                    (sleep #xffff)
+                 (disconnect client))))))))
 
 ;; we want to print usage whenever an option is wrong
 (defmethod cli:parse-command-line :around (command arguments)
