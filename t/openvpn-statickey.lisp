@@ -40,7 +40,9 @@ EOF
                                          :client-ip "10.8.0.2"
                                          :static-key (make-pathname
                                                       :name "static.key"
-                                                      :directory (pathname-directory folder)))))
+                                                      :directory (pathname-directory folder))
+                                         :cipher "AES-256-CBC"
+                                         :auth "SHA256")))
       (connect openvpn-client)
       (unwind-protect
            (progn

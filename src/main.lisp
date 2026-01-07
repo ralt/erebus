@@ -28,7 +28,7 @@
                       'openvpn-client-static-key
                       :host (ini:ini-value config :host :section :openvpn-server)
                       :port (ini:ini-value config :port :section :openvpn-server)
-                      :client-ip (ini:ini-value config :client-ip :section :openvpn-server)
+                      :client-ip (ini:ini-value config :client-ip :section :erebus)
                       :static-key (pathname
                                    (ini:ini-value config :static-key :section :openvpn-server))
                       :cipher (ini:ini-value config :cipher :section :openvpn-server)

@@ -86,7 +86,7 @@
       (setf (%hmac-length c) (ic:digest-length hmac-type))
 
       (let ((static-key-binary-value (%parse-static-key (%static-key c))))
-        (setf (%cipher-key c) (subseq static-key-binary-value 0 (* key-size 8)))
+        (setf (%cipher-key c) (subseq static-key-binary-value 0 (/ key-size 8)))
         (setf (%hmac-key c)
               (subseq static-key-binary-value 64 (+ 64 (%hmac-length c))))))))
 
