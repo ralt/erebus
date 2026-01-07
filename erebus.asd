@@ -2,7 +2,7 @@
   :serial t
   :license "GPLv2"
   :author "Florian Margaine <florian@margaine.com>"
-  :description "Rootless IPSec userspace proxy"
+  :description "Rootless VPN userspace proxy"
   :depends-on (:usocket
                :lisp-binary
                :ironclad
@@ -10,7 +10,9 @@
                :uiop
                :bordeaux-threads
                :lparallel
-               :local-time)
+               :local-time
+               :clingon
+               :cl-ini)
   :in-order-to ((test-op (test-op :erebus/test)))
   :components ((:module "src"
                 :serial t

@@ -80,7 +80,7 @@
 (defconstant +NO_COMPRESS_BYTE+ #xFA)
 
 (defun %serialize-packet (c packet)
-  (let* ((iv (%integer-to-octets (ic:random-bits (* +iv-length-aes-cbc+ 8)) +iv-length-aes-cbc+))
+  (let* ((iv (%integer-to-octets (random #xffffffffffffffff) +iv-length-aes-cbc+))
          (ciphertext (ic:encrypt-message
                       (ic:make-cipher :aes
                                       :mode :cbc

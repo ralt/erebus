@@ -6,7 +6,8 @@
                     (#:fs #:flexi-streams)
                     (#:bt #:bordeaux-threads)
                     (#:lp.q #:lparallel.queue)
-                    (#:lt #:local-time))
+                    (#:lt #:local-time)
+                    (#:cli #:clingon))
   (:export #:connect
            #:ping
            #:disconnect
