@@ -74,6 +74,11 @@
 (defmethod initialize-instance :after ((c openvpn-client-static-key) &key)
   (setf (%client-ip-address c) (string-ipv4-address-to-integer (client-ip c)))
   (setf (%connections c) (make-hash-table))
+  ;; Initialize an empty hash table of connections for each protocol
+  ;; we support so that we don't have to try doing that every time we
+  ;; make a new connection
+  (dolist (protocol (list +icmp-protocol+))
+    (setf (gethash protocol (%connections c)) (make-hash-table)))
   (setf (%connections-lock c) (bt:make-lock))
   (setf (%vpn-connection c) (make-instance 'vpn-connection
                                            :host (host c)
@@ -141,11 +146,14 @@
          (ipv4-icmp-packet (%make-ipv4-icmp-packet (%client-ip-address c)
                                                    dst-ip
                                                    key)))
-    (let ((queue (lp.q:make-queue)))
-      (bt:with-lock-held ((%connections-lock c))
-        (setf (gethash key (%connections c)) queue))
-      (send (%vpn-connection c) (%serialize-packet c ipv4-icmp-packet))
-      (lp.q:pop-queue queue))))
+    (%send-packet c +icmp-protocol+ key (%serialize-packet c ipv4-icmp-packet))))
+
+(defun %send-packet (c protocol key packet)
+  (let ((queue (lp.q:make-queue)))
+    (bt:with-lock-held ((%connections-lock c))
+      (setf (gethash key (gethash protocol (%connections c))) queue))
+    (send (%vpn-connection c) packet)
+    (lp.q:pop-queue queue)))
 
 (defun %reader-callback (c)
   (lambda (buffer size)
@@ -157,7 +165,7 @@
                (let* ((icmp-packet (bin:read-binary 'icmp-packet rest-stream))
                       (key (icmp-packet-identifier icmp-packet)))
                  (bt:with-lock-held ((%connections-lock c))
-                   (let ((queue (gethash key (%connections c))))
+                   (let ((queue (gethash key (gethash protocol (%connections c)))))
                      (lp.q:push-queue nil queue))))))))))
 
 (bin:defbinary openvpn-packet-id (:byte-order :big-endian)
