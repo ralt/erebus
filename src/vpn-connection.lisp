@@ -4,6 +4,7 @@
   ((host :initarg :host :reader host)
    (port :initarg :port :reader port)
    (reader-callback :initarg :reader-callback :reader reader-callback)
+   (error-callback :initarg :error-callback :reader error-callback)
    (%socket :accessor %socket)
    (%reader-thread :accessor %reader-thread)
    (%writer-thread :accessor %writer-thread)
@@ -38,11 +39,12 @@
                   (funcall (reader-callback c) buffer size)
                 (error (c)
                   (format t "error in reader callback: ~a~%" c))))
-          (error (c)
+          (error (condition)
             ;; this one is expected, this is what we get when we
             ;; INTERRUPT-THREAD
-            (unless (eq (type-of c) 'u:bad-file-descriptor-error)
-              (format t "error in reader loop: ~a~%" c))
+            (unless (eq (type-of condition) 'u:bad-file-descriptor-error)
+              (format t "error in reader loop: ~a~%" condition)
+              (funcall (error-callback c) condition))
             (return-from reader)))))))
 
 (defun %writer-loop (c)

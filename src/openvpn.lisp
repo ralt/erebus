@@ -83,7 +83,8 @@
   (setf (%vpn-connection c) (make-instance 'vpn-connection
                                            :host (host c)
                                            :port (port c)
-                                           :reader-callback (%reader-callback c)))
+                                           :reader-callback (%reader-callback c)
+                                           :error-callback (%error-callback c)))
   (let* ((hmac-type (cdr (assoc (auth c) *digests* :test #'string=)))
          (parts (uiop:split-string (secret c)))
          (secret-path (first parts))
@@ -153,7 +154,9 @@
     (bt:with-lock-held ((%connections-lock c))
       (setf (gethash key (gethash protocol (%connections c))) queue))
     (send (%vpn-connection c) packet)
-    (lp.q:pop-queue queue)))
+    (let ((condition (lp.q:pop-queue queue)))
+      (when condition
+        (error condition)))))
 
 (defun %reader-callback (c)
   (lambda (buffer size)
@@ -167,6 +170,17 @@
                  (bt:with-lock-held ((%connections-lock c))
                    (let ((queue (gethash key (gethash protocol (%connections c)))))
                      (lp.q:push-queue nil queue))))))))))
+
+(defun %error-callback (c)
+  (lambda (condition)
+    ;; just push the error to all the ongoing connections
+    (maphash (lambda (protocol table)
+               (declare (ignore protocol))
+               (maphash (lambda (key queue)
+                          (declare (ignore key))
+                          (lp.q:push-queue condition queue))
+                        table))
+             (%connections c))))
 
 (bin:defbinary openvpn-packet-id (:byte-order :big-endian)
   (packet-id 0 :type (unsigned-byte 32))
