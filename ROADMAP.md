@@ -32,13 +32,37 @@ Outcome:
 * A minimal, ESP-like OpenVPN client
 * Cryptographic and packet-format foundation
 
-## Phase 2 — Transport abstraction (UDP and TCP)
+## ✅ Phase 2 — Complete static-key support and good network citizen
+
+Goal: make the OpenVPN client a good OpenVPN citizen in static-key mode. Being a good citizen means replying to ICMP packets that the server sends.
+
+Scope:
+
+* Support a configuration file
+* Support all static-key modes (ciphers, key directions, compression)
+* Support ICMP packets sent by the server
+
+Key tasks:
+* Implement command line options parsing
+  * Implement compiling a binary to be able to use those as well
+* Define and implement a format for the configuration file
+* Use configuration file to define static-key modes
+* Implement static-key modes (i.e. what OpenVPN calls wire format v1)
+  * Support for various ciphers and modes (CBC, etc)
+  * Support for the 3 key directions
+  * Support for compression
+* Analyze, identify and implement replies to ICMP packets that OpenVPN server sends
+* Write down full readable documentation of the wire format v1
+
+Outcome:
+* An OpenVPN client supporting all static-key options that acts as a good citizen on the VPN network
+
+## Phase 3 — Transport abstraction (UDP and TCP)
 
 Goal: make the OpenVPN client transport-agnostic early.
 
 Scope:
 
-* Support a configuration file
 * Support both UDP and TCP transport modes
 * Static-key mode only
 * Identical packet logic across transports
@@ -61,7 +85,7 @@ Outcome:
 * One OpenVPN implementation that can switch between UDP and TCP
 * No protocol logic duplicated between transports
 
-## Phase 3 — Embedded TCP/IP stack over VPN traffic
+## Phase 4 — Embedded TCP/IP stack over VPN traffic
 
 Goal: implement a TCP/IP stack that runs entirely inside the VPN data channel.
 
@@ -90,7 +114,7 @@ Outcome:
 * A functional TCP/IP stack embedded inside VPN traffic
 * Foundation for higher-level protocols (e.g. HTTP) without OS-level networking
 
-## Phase 4 — Local HTTP proxy over OpenVPN
+## Phase 5 — Local HTTP proxy over OpenVPN
 
 Goal: expose VPN access through a local, developer-friendly interface.
 
@@ -112,7 +136,7 @@ Outcome:
 * Practical access to VPN resources
 * Clear demonstration of rootless design goals
 
-## Phase 5 — Expose local services to the VPN
+## Phase 6 — Expose local services to the VPN
 
 Goal: allow VPN peers to access selected local services through the client.
 
@@ -133,7 +157,7 @@ Outcome:
 * Bidirectional VPN interaction without kernel networking
 * Enables lightweight ingress use cases
 
-## Phase 6 — OpenVPN TLS support (UDP and TCP)
+## Phase 7 — OpenVPN TLS support (UDP and TCP)
 
 Goal: add full TLS-based OpenVPN support on top of an already working transport and proxy stack.
 
@@ -159,7 +183,7 @@ Outcome:
 * Fully standards-compatible OpenVPN client
 * Rootless operation preserved
 
-## Phase 7 — ESP / IKEv2 (strongSwan interoperability)
+## Phase 8 — ESP / IKEv2 (strongSwan interoperability)
 
 Goal: extend the architecture beyond OpenVPN to standard IPsec.
 
@@ -174,22 +198,20 @@ Key tasks:
 * Implement IKEv2 exchanges
 * Establish ESP Security Associations
 * Reuse existing crypto and transport abstractions
-* Compare and align with OpenVPN static-key semantics
 
 Outcome:
 
 * Generalized VPN client architecture
 * Support for industry-standard IPsec deployments
 
-## Phase 8 — Performance and advanced features (optional)
+## Phase 9 — Performance and advanced features (optional)
 
 Goal: improve efficiency and robustness after correctness is established.
 
 Potential areas:
 
 * TCP stack optimizations
-* UDP, ICMP, full TCP feature set
+* UDP, ICMP, full TCP feature set (some of those may appear in-between phases)
 * Packet batching
-* Compression
 
 These are intentionally deferred until all major protocol features are stable.
