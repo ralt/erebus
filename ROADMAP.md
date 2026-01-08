@@ -32,7 +32,7 @@ Outcome:
 * A minimal, ESP-like OpenVPN client
 * Cryptographic and packet-format foundation
 
-## Phase 2 — Complete static-key support and good network citizen
+## ✅ Phase 2 — Complete static-key support and good network citizen
 
 Goal: make the OpenVPN client a good OpenVPN citizen in static-key mode. Being a good citizen means replying to ICMP packets that the server sends.
 
