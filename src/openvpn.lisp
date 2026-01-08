@@ -150,11 +150,15 @@
 (defun %reader-callback (c)
   (lambda (buffer size)
     ;; Decrypt and then do the mapping with internal queues
-    (let* ((decrypted-ipv4-icmp-packet (%deserialize-packet c buffer size))
-           (key (icmp-packet-identifier (ipv4-icmp-packet-icmp-packet decrypted-ipv4-icmp-packet))))
-      (bt:with-lock-held ((%connections-lock c))
-        (let ((queue (gethash key (%connections c))))
-          (lp.q:push-queue nil queue))))))
+    (multiple-value-bind (packet-header rest-stream)
+        (%deserialize-packet c buffer size)
+      (let ((protocol (ipv4-header-protocol packet-header)))
+        (cond ((= protocol +icmp-protocol+)
+               (let* ((icmp-packet (bin:read-binary 'icmp-packet rest-stream))
+                      (key (icmp-packet-identifier icmp-packet)))
+                 (bt:with-lock-held ((%connections-lock c))
+                   (let ((queue (gethash key (%connections c))))
+                     (lp.q:push-queue nil queue))))))))))
 
 (bin:defbinary openvpn-packet-id (:byte-order :big-endian)
   (packet-id 0 :type (unsigned-byte 32))
@@ -208,7 +212,7 @@
         (fs:with-input-from-sequence (p decrypted-packet)
           (bin:read-binary 'openvpn-packet-id p) ; discard replay protection for now
           (read-byte p) ; compression byte, ignore for now
-          (bin:read-binary 'ipv4-icmp-packet p))))))
+          (values (bin:read-binary 'ipv4-header p) p))))))
 
 (defun %integer-to-octets (n size)
   (let ((buffer (make-array size :element-type 'octet)))
