@@ -25,6 +25,9 @@
              (let ((client
                      (make-instance
                       'openvpn-client-static-key
+                      :protocol (let ((proto (ini:ini-value config :proto :section :openvpn-server)))
+                                  (cond ((string= proto "udp") :datagram)
+                                        ((string= proto "tcp") :stream)))
                       :host (ini:ini-value config :host :section :openvpn-server)
                       :port (ini:ini-value config :port :section :openvpn-server)
                       :client-ip (ini:ini-value config :client-ip :section :erebus)
