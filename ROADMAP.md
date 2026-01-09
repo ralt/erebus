@@ -57,7 +57,7 @@ Key tasks:
 Outcome:
 * An OpenVPN client supporting all static-key options that acts as a good citizen on the VPN network
 
-## Phase 3 — Transport abstraction (UDP and TCP)
+## ✅ Phase 3 — Transport abstraction (UDP and TCP)
 
 Goal: make the OpenVPN client transport-agnostic early.
 
