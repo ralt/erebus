@@ -18,10 +18,12 @@
    (format nil "docker create \\
                  --privileged \\
                  --publish ~a:1194/udp \\
+                 --publish ~a:1194/tcp \\
                  --name ~a \\
                  --volume ~a:/etc/openvpn/ \\
                  --volume /lib/modules:/lib/modules \\
                  ralt/erebus:latest"
+           vpn-local-port
            vpn-local-port
            name
            folder)

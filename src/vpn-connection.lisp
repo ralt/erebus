@@ -1,7 +1,8 @@
 (in-package #:erebus)
 
 (defclass vpn-connection ()
-  ((host :initarg :host :reader host)
+  ((protocol :initarg :protocol :reader protocol)
+   (host :initarg :host :reader host)
    (port :initarg :port :reader port)
    (reader-callback :initarg :reader-callback :reader reader-callback)
    (error-callback :initarg :error-callback :reader error-callback)
@@ -13,7 +14,7 @@
 (defmethod connect ((c vpn-connection))
   (setf (%socket c)
         (u:socket-connect (host c) (port c)
-                          :protocol :datagram
+                          :protocol (protocol c)
                           :element-type '(unsigned-byte 8)))
   (setf (%writer-queue c) (lp.q:make-queue))
   (setf (%reader-thread c) (bt:make-thread (%reader-loop c) :name "reader thread"))
@@ -22,29 +23,36 @@
 (defmethod disconnect ((c vpn-connection))
   (lp.q:push-queue 'stop (%writer-queue c))
   (bt:join-thread (%writer-thread c))
+  (when (eq (protocol c) :stream)
+    (u:socket-shutdown (%socket c) :io))
   (u:socket-close (%socket c))
-  (bt:interrupt-thread (%reader-thread c) #'identity t)
-  (bt:join-thread (%reader-thread c)))
+  (bt:destroy-thread (%reader-thread c)))
 
 (defun %reader-loop (c)
   (lambda ()
     (block reader
       (loop
         (handler-case
-            (multiple-value-bind (buffer size)
-                (u:socket-receive (%socket c) nil 65507)
-              (when (= size 0)
-                (return-from reader))
-              (handler-case
-                  (funcall (reader-callback c) buffer size)
-                (error (c)
-                  (format t "error in reader callback: ~a~%" c))))
+            (cond
+              ((eq (protocol c) :datagram)
+               (multiple-value-bind (buffer size)
+                   (u:socket-receive (%socket c) nil #xffff)
+                 (handler-case
+                     (funcall (reader-callback c) buffer size)
+                   (error (condition)
+                     (format t "error in reader callback: ~a~%" condition)
+                     (funcall (error-callback c) condition)
+                     (return-from reader)))))
+              ((eq (protocol c) :stream)
+               (handler-case
+                   (funcall (reader-callback c) (u:socket-stream (%socket c)))
+                 (error (condition)
+                   (format t "error in reader callback: ~a~%" condition)
+                   (funcall (error-callback c) condition)
+                   (return-from reader)))))
           (error (condition)
-            ;; this one is expected, this is what we get when we
-            ;; INTERRUPT-THREAD
-            (unless (eq (type-of condition) 'u:bad-file-descriptor-error)
-              (format t "error in reader loop: ~a~%" condition)
-              (funcall (error-callback c) condition))
+            (format t "error in reader loop: ~a~%" condition)
+            (funcall (error-callback c) condition)
             (return-from reader)))))))
 
 (defun %writer-loop (c)
@@ -55,7 +63,12 @@
           (when (eq item 'stop)
             (return-from writer))
           (handler-case
-              (u:socket-send (%socket c) item (length item))
+              (cond ((eq (protocol c) :datagram)
+                     (u:socket-send (%socket c) item (length item)))
+                    ((eq (protocol c) :stream)
+                     (let ((stream (u:socket-stream (%socket c))))
+                       (write-sequence item stream)
+                       (finish-output stream))))
             (error (c)
               (format t "error in writer loop: ~a~%" c))))))))
 
