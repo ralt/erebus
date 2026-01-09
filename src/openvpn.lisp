@@ -155,17 +155,24 @@
                                                    key)))
     (%send-packet c +icmp-protocol+ key (%serialize-packet c ipv4-icmp-packet))))
 
+(bin:defbinary %tcp-packet-length (:byte-order :big-endian)
+  (length 0 :type (unsigned-byte 16)))
+
 (defun %send-packet (c protocol key packet)
   (let ((queue (lp.q:make-queue)))
     (bt:with-lock-held ((%connections-lock c))
       (setf (gethash key (gethash protocol (%connections c))) queue))
-    (send (%vpn-connection c) packet)
+    (send (%vpn-connection c)
+          (cond ((eq (protocol c) :stream)
+                 (concatenate 'octet-vector (fs:with-output-to-sequence (s)
+                                              (bin:write-binary
+                                               (make-%tcp-packet-length :length (length packet))
+                                               s))
+                              packet))
+                ((eq (protocol c) :datagram) packet)))
     (let ((condition (lp.q:pop-queue queue)))
       (when condition
         (error condition)))))
-
-(bin:defbinary %tcp-packet-length (:byte-order :big-endian)
-  (length 0 :type (unsigned-byte 16)))
 
 (defun %reader-callback-udp (c)
   (lambda (buffer size)
@@ -188,15 +195,26 @@
         (setf offset (+ offset (1- count)))))))
 
 (defun %reader-callback (c buffer size)
-  (multiple-value-bind (packet-header rest-stream)
+  (multiple-value-bind (type packet-header rest-stream)
       (%deserialize-packet c buffer size)
-    (let ((protocol (ipv4-header-protocol packet-header)))
-      (cond ((= protocol +icmp-protocol+)
-             (let* ((icmp-packet (bin:read-binary 'icmp-packet rest-stream))
-                    (key (icmp-packet-identifier icmp-packet)))
-               (bt:with-lock-held ((%connections-lock c))
-                 (let ((queue (gethash key (gethash protocol (%connections c)))))
-                   (lp.q:push-queue nil queue)))))))))
+    (cond ((eq type :ip)
+           (let ((protocol (ipv4-header-protocol packet-header)))
+             (cond ((= protocol +icmp-protocol+)
+                    (let* ((icmp-packet (bin:read-binary 'icmp-packet rest-stream))
+                           (key (icmp-packet-identifier icmp-packet)))
+                      (bt:with-lock-held ((%connections-lock c))
+                        (let ((queue (gethash key (gethash protocol (%connections c)))))
+                          (remhash key (gethash protocol (%connections c)))
+                          (lp.q:push-queue nil queue))))))))
+          ((eq type :ping) ; for yet non-understood reasons, ICMP
+                           ; packets on top of TCP are sent back as
+                           ; PING packets... which don't have an
+                           ; identifier. So we just guess...
+           (bt:with-lock-held ((%connections-lock c))
+             (maphash (lambda (key queue)
+                        (declare (ignore key))
+                        (lp.q:push-queue nil queue))
+                      (gethash +icmp-protocol+ (%connections c))))))))
 
 (defun %error-callback (c)
   (lambda (condition)
@@ -260,8 +278,14 @@
                                ciphertext)))
         (fs:with-input-from-sequence (p decrypted-packet)
           (bin:read-binary 'openvpn-packet-id p) ; discard replay protection for now
-          (read-byte p) ; compression byte, ignore for now
-          (values (bin:read-binary 'ipv4-header p) p))))))
+          (read-byte p)             ; compression byte, ignore for now
+          (let ((first-byte (fs:peek-byte p)))
+            (cond ((= first-byte #x45)  ; IP packet
+                   (values :ip (bin:read-binary 'ipv4-header p) p))
+                  ((= first-byte #x2A)  ; PING packet
+                   (let ((buffer (make-array 16 :element-type 'octet)))
+                     (read-sequence buffer p)
+                     (values :ping buffer))))))))))
 
 (defun %integer-to-octets (n size)
   (let ((buffer (make-array size :element-type 'octet)))
