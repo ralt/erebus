@@ -11,4 +11,5 @@
   (:export #:connect
            #:ping
            #:disconnect
-           #:openvpn-client-static-key))
+           #:openvpn-client-static-key
+           #:openvpn-connect))

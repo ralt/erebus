@@ -281,3 +281,21 @@
 (defun %integer-to-octets (n size)
   (let ((buffer (make-array size :element-type 'octet)))
     (u:integer-to-octet-buffer n buffer size)))
+
+(defclass openvpn-client-socket ()
+  ((client :initarg :client :reader client)
+   (protocol :initarg :protocol :reader protocol)
+   (host :initarg :host :reader host)
+   (port :initarg :port :reader port)
+   (stream :reader socket-stream :accessor %stream)))
+
+(defun openvpn-connect (client &key (protocol :stream) host port)
+  (make-instance 'openvpn-client-socket
+                 :client client
+                 :protocol :stream
+                 :host host
+                 :port port))
+
+(defmethod initialize-instance :after ((s openvpn-client-socket) &key)
+  ;; start a TCP handshake, i.e. open a TCP connection?
+)
