@@ -105,9 +105,8 @@ Key tasks:
 
 Out of scope:
 
-* UDP
-* ICMP
-* Full TCP feature set (window scaling, SACK, etc.)
+* Full TCP feature set (RTO, flow control, RACK, congestion control, window scaling, etc.)
+    See https://en.wikipedia.org/wiki/Transmission_Control_Protocol for a pretty complete list of features
 
 Outcome:
 
@@ -210,8 +209,11 @@ Goal: improve efficiency and robustness after correctness is established.
 
 Potential areas:
 
-* TCP stack optimizations
-* UDP, ICMP, full TCP feature set (some of those may appear in-between phases)
+* UDP (probably not so optional, just not in the path of an http proxy)
+* socks5 proxy (required if we want to support forwarding UDP)
+* Full ICMP feature set
+* Full TCP feature set (RTO, flow control, RACK, congestion control, window scaling, etc.)
+    See https://en.wikipedia.org/wiki/Transmission_Control_Protocol for a pretty complete list of features
 * Packet batching
 
 These are intentionally deferred until all major protocol features are stable.
