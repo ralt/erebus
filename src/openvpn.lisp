@@ -205,16 +205,7 @@
                       (bt:with-lock-held ((%connections-lock c))
                         (let ((queue (gethash key (gethash protocol (%connections c)))))
                           (remhash key (gethash protocol (%connections c)))
-                          (lp.q:push-queue nil queue))))))))
-          ((eq type :ping) ; for yet non-understood reasons, ICMP
-                           ; packets on top of TCP are sent back as
-                           ; PING packets... which don't have an
-                           ; identifier. So we just guess...
-           (bt:with-lock-held ((%connections-lock c))
-             (maphash (lambda (key queue)
-                        (declare (ignore key))
-                        (lp.q:push-queue nil queue))
-                      (gethash +icmp-protocol+ (%connections c))))))))
+                          (lp.q:push-queue nil queue)))))))))))
 
 (defun %error-callback (c)
   (lambda (condition)

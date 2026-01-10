@@ -40,16 +40,12 @@
                  (handler-case
                      (funcall (reader-callback c) buffer size)
                    (error (condition)
-                     (format t "error in reader callback: ~a~%" condition)
-                     (funcall (error-callback c) condition)
-                     (return-from reader)))))
+                     (format t "error in reader callback: ~a~%" condition)))))
               ((eq (protocol c) :stream)
                (handler-case
                    (funcall (reader-callback c) (u:socket-stream (%socket c)))
                  (error (condition)
-                   (format t "error in reader callback: ~a~%" condition)
-                   (funcall (error-callback c) condition)
-                   (return-from reader)))))
+                   (format t "error in reader callback: ~a~%" condition)))))
           (error (condition)
             (format t "error in reader loop: ~a~%" condition)
             (funcall (error-callback c) condition)
