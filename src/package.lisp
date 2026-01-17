@@ -8,7 +8,8 @@
                     (#:lp.q #:lparallel.queue)
                     (#:lt #:local-time)
                     (#:cli #:clingon)
-                    (#:a #:alexandria))
+                    (#:a #:alexandria)
+                    (#:gs #:trivial-gray-streams))
   (:export #:connect
            #:ping
            #:disconnect

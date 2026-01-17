@@ -301,6 +301,22 @@
   (let ((buffer (make-array size :element-type 'octet)))
     (u:integer-to-octet-buffer n buffer size)))
 
+(defclass %socket-stream (gs:fundamental-binary-stream)
+  ((%buffer :accessor %buffer)
+   (%socket :initarg :socket :accessor %socket)))
+
+(defmethod initialize-instance :after ((s %socket-stream) &key)
+  (setf (%buffer s) (make-array 0 :element-type 'octet)))
+
+(defmethod gs:stream-read-sequence ((s %socket-stream) sequence start end &key))
+
+(defmethod gs:stream-write-sequence ((s %socket-stream) sequence start end &key)
+  (setf (%buffer s) (concatenate 'octet-vector (%buffer s) (subseq sequence start end))))
+
+(defmethod gs:stream-finish-output ((s %socket-stream))
+  ;; wrap %buffer in an ipv4-tcp-packet and send over
+  )
+
 (defclass openvpn-client-socket ()
   ((client :initarg :client :reader client)
    (protocol :initarg :protocol :reader protocol)
@@ -347,4 +363,9 @@
                     (%make-ipv4-tcp-packet src-ip src-port
                                            dst-ip dst-port
                                            :seqno (mod (incf (%seqno s)) +max-32-bytes+)
-                                           :ackno (mod (incf (%ackno s)) +max-32-bytes+))))))
+                                           :ackno (mod (incf (%ackno s)) +max-32-bytes+)))
+
+      ;;;;; hmmmm %send-packet is explicitly a request/response model, but streams means duplexing. how do I reconcile both models? do I change %send-packet to only send, and not wait for a response? does it mean I need to setup a callback before sending the packet? if not, what does %reader-callback do when a packet arrives with a given key that doesn't exist yet? do I just use a stream internally? actually that looks like a better idea than using a queue... although not sure how to handle errors.
+
+      ;; expose the stream once connection is established
+      (setf (%stream s) (make-instance '%socket-stream :socket s)))))

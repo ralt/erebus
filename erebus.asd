@@ -13,7 +13,8 @@
                :local-time
                :clingon
                :cl-ini
-               :alexandria)
+               :alexandria
+               :trivial-gray-streams)
   :in-order-to ((test-op (test-op :erebus/test)))
   :components ((:module "src"
                 :serial t
