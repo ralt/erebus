@@ -7,7 +7,8 @@
                     (#:bt #:bordeaux-threads)
                     (#:lp.q #:lparallel.queue)
                     (#:lt #:local-time)
-                    (#:cli #:clingon))
+                    (#:cli #:clingon)
+                    (#:a #:alexandria))
   (:export #:connect
            #:ping
            #:disconnect

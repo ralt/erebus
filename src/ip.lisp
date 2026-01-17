@@ -16,6 +16,8 @@
 
 (defconstant +icmp-echo-request+ 8)
 
+(defconstant +max-32-bytes+ (expt 2 32))
+
 (bin:defbinary icmp-packet (:byte-order :big-endian)
   (type +icmp-echo-request+ :type (unsigned-byte 8))
   (code 0 :type (unsigned-byte 8))

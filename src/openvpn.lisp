@@ -328,7 +328,7 @@
          (key (list src-ip src-port dst-ip dst-port))
          (tcp-packet (%make-ipv4-tcp-packet src-ip src-port
                                             dst-ip dst-port
-                                            :seqno (incf (%seqno s))
+                                            :seqno (mod (incf (%seqno s)) +max-32-bytes+)
                                             :syn 1)))
     ;; syn
     (multiple-value-bind (tcp-header rest-stream)
@@ -337,7 +337,7 @@
       ;; verify syn-ack is valid
       (assert (= 1 (tcp-header-syn tcp-header)))
       (assert (= 1 (tcp-header-ack tcp-header)))
-      (assert (= (1+ (%seqno s)) (tcp-header-seqno tcp-header)))
+      (assert (= (mod (1+ (%seqno s)) +max-32-bytes+) (tcp-header-seqno tcp-header)))
       (setf (%ackno s) (tcp-header-ackno tcp-header))
 
       ;; ack
@@ -346,5 +346,5 @@
                     key
                     (%make-ipv4-tcp-packet src-ip src-port
                                            dst-ip dst-port
-                                           :seqno (incf (%seqno s))
-                                           :ackno (incf (%ackno s)))))))
+                                           :seqno (mod (incf (%seqno s)) +max-32-bytes+)
+                                           :ackno (mod (incf (%ackno s)) +max-32-bytes+))))))
