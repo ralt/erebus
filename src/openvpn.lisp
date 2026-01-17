@@ -78,8 +78,8 @@
   ;; Initialize an empty hash table of connections for each protocol
   ;; we support so that we don't have to try doing that every time we
   ;; make a new connection
-  (dolist (protocol (list +icmp-protocol+))
-    (setf (gethash protocol (%connections c)) (make-hash-table)))
+  (dolist (protocol (list +icmp-protocol+ +tcp-protocol+))
+    (setf (gethash protocol (%connections c)) (make-hash-table :test #'equal)))
   (setf (%connections-lock c) (bt:make-lock))
   (setf (%vpn-connection c)
         (make-instance 'vpn-connection
@@ -153,26 +153,29 @@
          (ipv4-icmp-packet (%make-ipv4-icmp-packet (%client-ip-address c)
                                                    dst-ip
                                                    key)))
-    (%send-packet c +icmp-protocol+ key (%serialize-packet c ipv4-icmp-packet))))
+    (%send-packet c +icmp-protocol+ key ipv4-icmp-packet)))
 
 (bin:defbinary %tcp-packet-length (:byte-order :big-endian)
   (length 0 :type (unsigned-byte 16)))
 
 (defun %send-packet (c protocol key packet)
-  (let ((queue (lp.q:make-queue)))
+  (let ((serialized-packet (%serialize-packet c packet))
+        (queue (lp.q:make-queue)))
     (bt:with-lock-held ((%connections-lock c))
       (setf (gethash key (gethash protocol (%connections c))) queue))
     (send (%vpn-connection c)
           (cond ((eq (protocol c) :stream)
                  (concatenate 'octet-vector (fs:with-output-to-sequence (s)
                                               (bin:write-binary
-                                               (make-%tcp-packet-length :length (length packet))
+                                               (make-%tcp-packet-length
+                                                :length (length serialized-packet))
                                                s))
-                              packet))
-                ((eq (protocol c) :datagram) packet)))
-    (let ((condition (lp.q:pop-queue queue)))
-      (when condition
-        (error condition)))))
+                              serialized-packet))
+                ((eq (protocol c) :datagram) serialized-packet)))
+    (let ((result (lp.q:pop-queue queue)))
+      (when (eq (type-of result) 'condition)
+        (error result))
+      result)))
 
 (defun %reader-callback-udp (c)
   (lambda (buffer size)
@@ -205,7 +208,19 @@
                       (bt:with-lock-held ((%connections-lock c))
                         (let ((queue (gethash key (gethash protocol (%connections c)))))
                           (remhash key (gethash protocol (%connections c)))
-                          (lp.q:push-queue nil queue)))))))))))
+                          (lp.q:push-queue nil queue)))))
+
+                   ((= protocol +tcp-protocol+)
+                    (let* ((tcp-header (bin:read-binary 'tcp-header rest-stream))
+                           (src-ip (ipv4-header-src-ip packet-header))
+                           (src-port (tcp-header-src-port tcp-header))
+                           (dst-ip (ipv4-header-dst-ip packet-header))
+                           (dst-port (tcp-header-dst-port tcp-header))
+                           (key (list src-ip src-port dst-ip dst-port)))
+                      (bt:with-lock-held ((%connections-lock c))
+                        (let ((queue (gethash key (gethash protocol (%connections c)))))
+                          (remhash key (gethash protocol (%connections c)))
+                          (lp.q:push-queue (list tcp-header rest-stream) queue)))))))))))
 
 (defun %error-callback (c)
   (lambda (condition)
@@ -268,7 +283,8 @@
                                                :initialization-vector iv)
                                ciphertext)))
         (fs:with-input-from-sequence (p decrypted-packet)
-          (bin:read-binary 'openvpn-packet-id p) ; discard replay protection for now
+          (bin:read-binary 'openvpn-packet-id p) ; discard replay
+                                                 ; protection for now
           (read-byte p)             ; compression byte, ignore for now
           (let ((first-byte (fs:peek-byte p)))
             (cond ((= first-byte #x45)  ; IP packet
@@ -277,6 +293,9 @@
                    (let ((buffer (make-array 16 :element-type 'octet)))
                      (read-sequence buffer p)
                      (values :ping buffer))))))))))
+
+(defmethod find-free-client-port ((c openvpn-client-static-key))
+  (find-free-client-port (%vpn-connection c)))
 
 (defun %integer-to-octets (n size)
   (let ((buffer (make-array size :element-type 'octet)))
@@ -287,15 +306,45 @@
    (protocol :initarg :protocol :reader protocol)
    (host :initarg :host :reader host)
    (port :initarg :port :reader port)
-   (stream :reader socket-stream :accessor %stream)))
+   (stream :reader socket-stream :accessor %stream)
+   (%seqno :accessor %seqno :initform 0)
+   (%ackno :accessor %ackno)))
 
 (defun openvpn-connect (client &key (protocol :stream) host port)
   (make-instance 'openvpn-client-socket
                  :client client
-                 :protocol :stream
+                 :protocol :stream ; only supported protocol for now
                  :host host
                  :port port))
 
 (defmethod initialize-instance :after ((s openvpn-client-socket) &key)
-  ;; start a TCP handshake, i.e. open a TCP connection?
-)
+  ;; establish tcp connection
+  (setf (%seqno s) (random #xffffffff))
+  (let* ((client (client s))
+         (src-port (find-free-client-port client))
+         (src-ip (%client-ip-address client))
+         (dst-ip (string-ipv4-address-to-integer (host s)))
+         (dst-port (port s))
+         (key (list src-ip src-port dst-ip dst-port))
+         (tcp-packet (%make-ipv4-tcp-packet src-ip src-port
+                                            dst-ip dst-port
+                                            :seqno (incf (%seqno s))
+                                            :syn 1)))
+    ;; syn
+    (multiple-value-bind (tcp-header rest-stream)
+        (%send-packet client +tcp-protocol+ key tcp-packet)
+      (declare (ignore rest-stream))
+      ;; verify syn-ack is valid
+      (assert (= 1 (tcp-header-syn tcp-header)))
+      (assert (= 1 (tcp-header-ack tcp-header)))
+      (assert (= (1+ (%seqno s)) (tcp-header-seqno tcp-header)))
+      (setf (%ackno s) (tcp-header-ackno tcp-header))
+
+      ;; ack
+      (%send-packet client
+                    +tcp-protocol+
+                    key
+                    (%make-ipv4-tcp-packet src-ip src-port
+                                           dst-ip dst-port
+                                           :seqno (incf (%seqno s))
+                                           :ackno (incf (%ackno s)))))))

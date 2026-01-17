@@ -23,6 +23,27 @@
   (identifier 0 :type (unsigned-byte 16))
   (sequence-number 0 :type (unsigned-byte 16)))
 
+(bin:defbinary tcp-header (:byte-order :big-endian)
+  (src-port 0 :type (unsigned-byte 16))
+  (dst-port 0 :type (unsigned-byte 16))
+  (seqno 0 :type (unsigned-byte 32))
+  (ackno 0 :type (unsigned-byte 32))
+  (doffset 0 :type (unsigned-byte 4))
+  (rsrvd 0 :type (unsigned-byte 4))
+
+  (cwr 0 :type (unsigned-byte 1))
+  (ece 0 :type (unsigned-byte 1))
+  (urg 0 :type (unsigned-byte 1))
+  (ack 0 :type (unsigned-byte 1))
+  (psh 0 :type (unsigned-byte 1))
+  (rst 0 :type (unsigned-byte 1))
+  (syn 0 :type (unsigned-byte 1))
+  (fin 0 :type (unsigned-byte 1))
+
+  (window 0 :type (unsigned-byte 16))
+  (checksum 0 :type (unsigned-byte 16))
+  (urgent-pointer 0 :type (unsigned-byte 16)))
+
 (defun packet-bytes-checksum (packet)
   (let ((packet-bytes (fs:with-output-to-sequence (s)
                         (bin:write-binary packet s))))
@@ -42,6 +63,7 @@
       (%wrap-around-carry (+ (logand sum #xffff) (ash sum -16)))))
 
 (defconstant +icmp-protocol+ 1)
+(defconstant +tcp-protocol+ 6)
 
 (bin:defbinary ipv4-icmp-packet (:byte-order :big-endian)
   (ipv4-header nil :type ipv4-header)
@@ -66,6 +88,33 @@
 
           (make-ipv4-icmp-packet :ipv4-header ipv4-header
                                  :icmp-packet icmp-packet))))))
+
+(bin:defbinary ipv4-tcp-packet (:byte-order :big-endian)
+  (ipv4-header nil :type ipv4-header)
+  (tcp-header nil :type tcp-header))
+
+(defun %make-ipv4-tcp-packet (src-ip src-port dst-ip dst-port &key seqno (ackno 0) (syn 0) (ack 0))
+  (let ((tcp-header (make-tcp-header :src-port src-port
+                                     :dst-port dst-port
+                                     :seqno seqno
+                                     :ackno ackno
+                                     :syn syn
+                                     :ack ack)))
+    (multiple-value-bind (tcp-header-bytes checksum)
+        (packet-bytes-checksum tcp-header)
+      (setf (tcp-header-checksum tcp-header) checksum)
+
+      (let ((ipv4-header (make-ipv4-header :total-length (+ 20 (length tcp-header-bytes))
+                                           :protocol +tcp-protocol+
+                                           :src-ip src-ip
+                                           :dst-ip dst-ip)))
+        (multiple-value-bind (ipv4-header-bytes ipv4-header-checksum)
+            (packet-bytes-checksum ipv4-header)
+          (declare (ignore ipv4-header-bytes))
+          (setf (ipv4-header-header-checksum ipv4-header) ipv4-header-checksum)
+
+          (make-ipv4-tcp-packet :ipv4-header ipv4-header
+                                :tcp-header tcp-header))))))
 
 (defun string-ipv4-address-to-integer (string-address)
   (let* ((parts (uiop:split-string string-address :separator "."))

@@ -9,7 +9,8 @@
    (%socket :accessor %socket)
    (%reader-thread :accessor %reader-thread)
    (%writer-thread :accessor %writer-thread)
-   (%writer-queue :accessor %writer-queue)))
+   (%writer-queue :accessor %writer-queue)
+   (%client-ports :accessor %client-ports :initform nil)))
 
 (defmethod connect ((c vpn-connection))
   (setf (%socket c)
@@ -70,3 +71,10 @@
 
 (defmethod send ((c vpn-connection) packet)
   (lp.q:push-queue packet (%writer-queue c)))
+
+(defmethod find-free-client-port ((c vpn-connection))
+  (loop
+    (let ((port (+ 30000 (random 30000))))
+      (unless (member port (%client-ports c))
+        (push port (%client-ports c))
+        (return-from find-free-client-port port)))))
