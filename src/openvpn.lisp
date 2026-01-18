@@ -172,10 +172,12 @@
                                                s))
                               serialized-packet))
                 ((eq (protocol c) :datagram) serialized-packet)))
-    (let ((result (lp.q:pop-queue queue)))
-      (when (eq (type-of result) 'condition)
-        (error result))
-      result)))
+    ;; we only want to wait for ICMP, other protocols are rather stream oriented
+    (when (eq protocol +icmp-protocol+)
+      (let ((result (lp.q:pop-queue queue)))
+        (when (eq (type-of result) 'condition)
+          (error result))
+        result))))
 
 (defun %reader-callback-udp (c)
   (lambda (buffer size)
@@ -219,8 +221,16 @@
                            (key (list src-ip src-port dst-ip dst-port)))
                       (bt:with-lock-held ((%connections-lock c))
                         (let ((queue (gethash key (gethash protocol (%connections c)))))
-                          (remhash key (gethash protocol (%connections c)))
                           (lp.q:push-queue (list tcp-header rest-stream) queue)))))))))))
+
+(defun %receive-packet (c protocol key)
+  (let ((queue))
+    (bt:with-lock-held ((%connections-lock c))
+      (setf queue (gethash key (gethash protocol (%connections c)))))
+    ;; make sure we wait for new item *without* holding the lock, it
+    ;; could wait for a while and we want other packets to be
+    ;; processed in the meantime.
+    (lp.q:pop-queue queue)))
 
 (defun %error-callback (c)
   (lambda (condition)
@@ -347,8 +357,10 @@
                                             :seqno (mod (incf (%seqno s)) +max-32-bytes+)
                                             :syn 1)))
     ;; syn
+    (%send-packet client +tcp-protocol+ key tcp-packet)
+
     (multiple-value-bind (tcp-header rest-stream)
-        (%send-packet client +tcp-protocol+ key tcp-packet)
+        (%receive-packet client +tcp-protocol+ key)
       (declare (ignore rest-stream))
       ;; verify syn-ack is valid
       (assert (= 1 (tcp-header-syn tcp-header)))
@@ -364,8 +376,6 @@
                                            dst-ip dst-port
                                            :seqno (mod (incf (%seqno s)) +max-32-bytes+)
                                            :ackno (mod (incf (%ackno s)) +max-32-bytes+)))
-
-      ;;;;; hmmmm %send-packet is explicitly a request/response model, but streams means duplexing. how do I reconcile both models? do I change %send-packet to only send, and not wait for a response? does it mean I need to setup a callback before sending the packet? if not, what does %reader-callback do when a packet arrives with a given key that doesn't exist yet? do I just use a stream internally? actually that looks like a better idea than using a queue... although not sure how to handle errors.
 
       ;; expose the stream once connection is established
       (setf (%stream s) (make-instance '%socket-stream :socket s)))))
