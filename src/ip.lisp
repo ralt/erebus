@@ -101,7 +101,8 @@
                                      :seqno seqno
                                      :ackno ackno
                                      :syn syn
-                                     :ack ack)))
+                                     :ack ack
+                                     :window 1024)))
     (multiple-value-bind (tcp-header-bytes checksum)
         (packet-bytes-checksum tcp-header)
       (setf (tcp-header-checksum tcp-header) checksum)

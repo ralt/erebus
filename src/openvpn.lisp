@@ -221,6 +221,7 @@
                            (key (list src-ip src-port dst-ip dst-port)))
                       (bt:with-lock-held ((%connections-lock c))
                         (let ((queue (gethash key (gethash protocol (%connections c)))))
+                          ;; TODO: not finding the key here should return a connection refused
                           (lp.q:push-queue (list tcp-header rest-stream) queue)))))))))))
 
 (defun %receive-packet (c protocol key)
