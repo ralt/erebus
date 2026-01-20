@@ -295,7 +295,7 @@
                                ciphertext)))
         (fs:with-input-from-sequence (p decrypted-packet)
           (bin:read-binary 'openvpn-packet-id p) ; discard replay
-                                                 ; protection for now
+                                        ; protection for now
           (read-byte p)             ; compression byte, ignore for now
           (let ((first-byte (fs:peek-byte p)))
             (cond ((= first-byte #x45)  ; IP packet
@@ -303,7 +303,9 @@
                   ((= first-byte #x2A)  ; PING packet
                    (let ((buffer (make-array 16 :element-type 'octet)))
                      (read-sequence buffer p)
-                     (values :ping buffer))))))))))
+                     (values :ping buffer)))
+                  ((= first-byte #x28)  ; OCC packet; ignore
+                   :ping))))))))
 
 (defmethod find-free-client-port ((c openvpn-client-static-key))
   (find-free-client-port (%vpn-connection c)))
