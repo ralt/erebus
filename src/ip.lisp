@@ -30,7 +30,7 @@
   (dst-port 0 :type (unsigned-byte 16))
   (seqno 0 :type (unsigned-byte 32))
   (ackno 0 :type (unsigned-byte 32))
-  (doffset 0 :type (unsigned-byte 4))
+  (doffset 5 :type (unsigned-byte 4))
   (rsrvd 0 :type (unsigned-byte 4))
 
   (cwr 0 :type (unsigned-byte 1))
