@@ -16,7 +16,7 @@
   (setf (%socket c)
         (u:socket-connect (host c) (port c)
                           :protocol (protocol c)
-                          :element-type '(unsigned-byte 8)))
+                          :element-type 'octet))
   (setf (%writer-queue c) (lp.q:make-queue))
   (setf (%reader-thread c) (bt:make-thread (%reader-loop c) :name "reader thread"))
   (setf (%writer-thread c) (bt:make-thread (%writer-loop c) :name "writer thread")))
