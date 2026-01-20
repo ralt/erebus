@@ -23,7 +23,8 @@
    (%hmac-encrypt-key :accessor %hmac-encrypt-key)
    (%hmac-decrypt-key :accessor %hmac-decrypt-key)
    (%hmac-length :accessor %hmac-length)
-   (%socket :accessor %socket)))
+   (%socket :accessor %socket)
+   (%ping-thread :accessor %ping-thread)))
 
 (defun %hex-string-to-byte-vector (str nb)
   (let ((bytes (make-array nb :element-type 'octet)))
@@ -142,10 +143,24 @@
                       (+ hmac-decrypt-start (%hmac-length c))))))))
 
 (defmethod connect ((c openvpn-client-static-key))
-  (connect (%vpn-connection c)))
+  (connect (%vpn-connection c))
+  (setf (%ping-thread c) (bt:make-thread (%ping-loop c) :name "ping thread")))
 
 (defmethod disconnect ((c openvpn-client-static-key))
+  (bt:destroy-thread (%ping-thread c))
   (disconnect (%vpn-connection c)))
+
+(bin:defbinary %ping-packet (:byte-order :big-endian)
+  (magic #x2a187bf3641eb4cb07ed2d0a981fc748
+         :type (bin:magic :actual-type (unsigned-byte 128)
+                          :value #x2a187bf3641eb4cb07ed2d0a981fc748)))
+
+(defun %ping-loop (c)
+  (lambda ()
+    (loop
+      (%send-packet c nil nil (make-%ping-packet))
+      (sleep 10) ; TODO: should this ping interval be configurable?
+      )))
 
 (defmethod ping ((c openvpn-client-static-key) dst-address)
   (let* ((dst-ip (string-ipv4-address-to-integer dst-address))
@@ -161,8 +176,9 @@
 (defun %send-packet (c protocol key packet)
   (let ((serialized-packet (%serialize-packet c packet))
         (queue (lp.q:make-queue)))
-    (bt:with-lock-held ((%connections-lock c))
-      (setf (gethash key (gethash protocol (%connections c))) queue))
+    (when protocol
+      (bt:with-lock-held ((%connections-lock c))
+        (setf (gethash key (gethash protocol (%connections c))) queue)))
     (send (%vpn-connection c)
           (cond ((eq (protocol c) :stream)
                  (concatenate 'octet-vector (fs:with-output-to-sequence (s)
