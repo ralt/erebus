@@ -46,6 +46,13 @@
   (checksum 0 :type (unsigned-byte 16))
   (urgent-pointer 0 :type (unsigned-byte 16)))
 
+(bin:defbinary tcp-pseudo-header-for-checksum (:byte-order :big-endian)
+  (src-port 0 :type (unsigned-byte 16))
+  (dst-port 0 :type (unsigned-byte 16))
+  (zeroes 0 :type (unsigned-byte 8))
+  (protocol 6 :type (unsigned-byte 8))
+  (total-length 0 :type (unsigned-byte 16)))
+
 (defun packet-bytes-checksum (packet)
   (let ((packet-bytes (fs:with-output-to-sequence (s)
                         (bin:write-binary packet s))))
@@ -102,12 +109,21 @@
                                      :ackno ackno
                                      :syn syn
                                      :ack ack
-                                     :window 1024)))
+                                     :window 1024))
+        (tcp-pseudo-header (make-tcp-pseudo-header-for-checksum
+                            :src-port src-port
+                            :dst-port dst-port
+                            :total-length 20 ; TODO: this definitely should include data.
+                            )))
     (multiple-value-bind (tcp-header-bytes checksum)
-        (packet-bytes-checksum tcp-header)
+        (packet-bytes-checksum tcp-pseudo-header)
+      (declare (ignore tcp-header-bytes))
       (setf (tcp-header-checksum tcp-header) checksum)
 
-      (let ((ipv4-header (make-ipv4-header :total-length (+ 20 (length tcp-header-bytes))
+      (let ((ipv4-header (make-ipv4-header :total-length (+ 20
+                                                            (length
+                                                             (fs:with-output-to-sequence (s)
+                                                               (bin:write-binary tcp-header s))))
                                            :protocol +tcp-protocol+
                                            :src-ip src-ip
                                            :dst-ip dst-ip)))
