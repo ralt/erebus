@@ -47,15 +47,16 @@
   (urgent-pointer 0 :type (unsigned-byte 16)))
 
 (bin:defbinary tcp-pseudo-header-for-checksum (:byte-order :big-endian)
-  (src-port 0 :type (unsigned-byte 16))
-  (dst-port 0 :type (unsigned-byte 16))
+  (src-address 0 :type (unsigned-byte 32))
+  (dst-address 0 :type (unsigned-byte 32))
   (zeroes 0 :type (unsigned-byte 8))
   (protocol 6 :type (unsigned-byte 8))
   (total-length 0 :type (unsigned-byte 16)))
 
-(defun packet-bytes-checksum (packet)
+(defun packet-bytes-checksum (packets)
   (let ((packet-bytes (fs:with-output-to-sequence (s)
-                        (bin:write-binary packet s))))
+                        (dolist (packet packets)
+                          (bin:write-binary packet s)))))
     (values packet-bytes (%sum-16bits packet-bytes))))
 
 (defun %sum-16bits (bytes &optional (sum 0))
@@ -81,7 +82,7 @@
 (defun %make-ipv4-icmp-packet (src-ip dst-ip &optional (identifier 0) (sequence-number 0))
   (let ((icmp-packet (make-icmp-packet :identifier identifier :sequence-number sequence-number)))
     (multiple-value-bind (icmp-packet-bytes icmp-checksum)
-        (packet-bytes-checksum icmp-packet)
+        (packet-bytes-checksum (list icmp-packet))
       (setf (icmp-packet-checksum icmp-packet) icmp-checksum)
 
       (let ((ipv4-header (make-ipv4-header
@@ -90,7 +91,7 @@
                           :src-ip src-ip
                           :dst-ip dst-ip)))
         (multiple-value-bind (ipv4-header-bytes ipv4-header-checksum)
-            (packet-bytes-checksum ipv4-header)
+            (packet-bytes-checksum (list ipv4-header))
           (declare (ignore ipv4-header-bytes))
           (setf (ipv4-header-header-checksum ipv4-header)
                 ipv4-header-checksum)
@@ -111,12 +112,12 @@
                                      :ack ack
                                      :window 1024))
         (tcp-pseudo-header (make-tcp-pseudo-header-for-checksum
-                            :src-port src-port
-                            :dst-port dst-port
+                            :src-address src-ip
+                            :dst-address dst-ip
                             :total-length 20 ; TODO: this definitely should include data.
                             )))
     (multiple-value-bind (tcp-header-bytes checksum)
-        (packet-bytes-checksum tcp-pseudo-header)
+        (packet-bytes-checksum (list tcp-pseudo-header tcp-header))
       (declare (ignore tcp-header-bytes))
       (setf (tcp-header-checksum tcp-header) checksum)
 
@@ -128,7 +129,7 @@
                                            :src-ip src-ip
                                            :dst-ip dst-ip)))
         (multiple-value-bind (ipv4-header-bytes ipv4-header-checksum)
-            (packet-bytes-checksum ipv4-header)
+            (packet-bytes-checksum (list ipv4-header))
           (declare (ignore ipv4-header-bytes))
           (setf (ipv4-header-header-checksum ipv4-header) ipv4-header-checksum)
 
