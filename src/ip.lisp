@@ -56,7 +56,10 @@
 (defun packet-bytes-checksum (packets)
   (let ((packet-bytes (fs:with-output-to-sequence (s)
                         (dolist (packet packets)
-                          (bin:write-binary packet s)))))
+                          (cond ((vectorp packet)
+                                 (write-sequence packet s))
+                                (t
+                                 (bin:write-binary packet s)))))))
     (values packet-bytes (%sum-16bits packet-bytes))))
 
 (defun %sum-16bits (bytes &optional (sum 0))
@@ -103,28 +106,33 @@
   (ipv4-header nil :type ipv4-header)
   (tcp-header nil :type tcp-header))
 
-(defun %make-ipv4-tcp-packet (src-ip src-port dst-ip dst-port &key seqno (ackno 0) (syn 0) (ack 0))
-  (let ((tcp-header (make-tcp-header :src-port src-port
-                                     :dst-port dst-port
-                                     :seqno seqno
-                                     :ackno ackno
-                                     :syn syn
-                                     :ack ack
-                                     :window 1024))
-        (tcp-pseudo-header (make-tcp-pseudo-header-for-checksum
-                            :src-address src-ip
-                            :dst-address dst-ip
-                            :total-length 20 ; TODO: this definitely should include data.
-                            )))
+(defun %make-ipv4-tcp-packet (src-ip src-port dst-ip dst-port &key
+                                                                seqno
+                                                                (ackno 0)
+                                                                (syn 0)
+                                                                (ack 0)
+                                                                (data #()))
+  (let* ((tcp-header (make-tcp-header :src-port src-port
+                                      :dst-port dst-port
+                                      :seqno seqno
+                                      :ackno ackno
+                                      :syn syn
+                                      :ack ack
+                                      :window 1024))
+         (tcp-header-length (length
+                             (fs:with-output-to-sequence (s)
+                               (bin:write-binary tcp-header s))))
+         (tcp-pseudo-header (make-tcp-pseudo-header-for-checksum
+                             :src-address src-ip
+                             :dst-address dst-ip
+                             :total-length (+ tcp-header-length (length data)))))
+
     (multiple-value-bind (tcp-header-bytes checksum)
-        (packet-bytes-checksum (list tcp-pseudo-header tcp-header))
+        (packet-bytes-checksum (list tcp-pseudo-header tcp-header data))
       (declare (ignore tcp-header-bytes))
       (setf (tcp-header-checksum tcp-header) checksum)
 
-      (let ((ipv4-header (make-ipv4-header :total-length (+ 20
-                                                            (length
-                                                             (fs:with-output-to-sequence (s)
-                                                               (bin:write-binary tcp-header s))))
+      (let ((ipv4-header (make-ipv4-header :total-length (+ 20 tcp-header-length (length data))
                                            :protocol +tcp-protocol+
                                            :src-ip src-ip
                                            :dst-ip dst-ip)))

@@ -337,14 +337,29 @@
 (defmethod initialize-instance :after ((s %socket-stream) &key)
   (setf (%buffer s) (make-array 0 :element-type 'octet)))
 
-(defmethod gs:stream-read-sequence ((s %socket-stream) sequence start end &key))
+(defmethod gs:stream-read-sequence ((s %socket-stream) sequence start end &key)
+  (let* ((socket (%socket s))
+         (client (client socket)))
+    (destructuring-bind (tcp-header rest-stream)
+        (%receive-packet client +tcp-protocol+ (%key socket))
+      (setf (%ackno socket) (tcp-header-seqno tcp-header))
+
+      (write-sequence sequence rest-stream))))
 
 (defmethod gs:stream-write-sequence ((s %socket-stream) sequence start end &key)
+  ;; TODO: should we auto-finish-output at some point?
   (setf (%buffer s) (concatenate 'octet-vector (%buffer s) (subseq sequence start end))))
 
 (defmethod gs:stream-finish-output ((s %socket-stream))
   ;; wrap %buffer in an ipv4-tcp-packet and send over
-  )
+  (let* ((socket (%socket s))
+         (client (client socket))
+         (tcp-packet (%make-ipv4-tcp-packet (%src-ip socket) (%src-port socket)
+                                            (%dst-ip socket) (%dst-port socket)
+                                            :seqno (%next-seqno s)
+                                            :ackno (%next-ackno s)
+                                            :data (%buffer s))))
+    (%send-packet client +tcp-protocol+ (%key socket) tcp-packet)))
 
 (defclass openvpn-client-socket ()
   ((client :initarg :client :reader client)
@@ -352,13 +367,26 @@
    (host :initarg :host :reader host)
    (port :initarg :port :reader port)
    (stream :reader socket-stream :accessor %stream)
+   (%src-ip :accessor %src-ip)
+   (%src-port :accessor %src-port)
+   (%dst-ip :accessor %dst-ip)
+   (%dst-port :accessor %dst-port)
    (%seqno :accessor %seqno :initform 0)
    (%ackno :accessor %ackno)))
+
+(defmethod %key ((s openvpn-client-socket))
+  (list (%src-ip s) (%src-port s) (%dst-ip s) (%dst-port s)))
+
+(defmethod %next-seqno ((s openvpn-client-socket))
+  (mod (incf (%seqno s)) +max-32-bytes+))
+
+(defmethod %next-ackno ((s openvpn-client-socket))
+  (mod (incf (%ackno s)) +max-32-bytes+))
 
 (defun openvpn-connect (client &key (protocol :stream) host port)
   (make-instance 'openvpn-client-socket
                  :client client
-                 :protocol :stream ; only supported protocol for now
+                 :protocol :stream   ; only supported protocol for now
                  :host host
                  :port port))
 
@@ -373,8 +401,13 @@
          (key (list src-ip src-port dst-ip dst-port))
          (tcp-packet (%make-ipv4-tcp-packet src-ip src-port
                                             dst-ip dst-port
-                                            :seqno (mod (incf (%seqno s)) +max-32-bytes+)
+                                            :seqno (%next-seqno s)
                                             :syn 1)))
+    (setf (%src-ip s) src-ip)
+    (setf (%src-port s) src-port)
+    (setf (%dst-ip s) dst-ip)
+    (setf (%dst-port s) dst-port)
+
     ;; syn
     (%send-packet client +tcp-protocol+ key tcp-packet)
 
@@ -393,8 +426,9 @@
                     key
                     (%make-ipv4-tcp-packet src-ip src-port
                                            dst-ip dst-port
-                                           :seqno (mod (incf (%seqno s)) +max-32-bytes+)
-                                           :ackno (mod (incf (%ackno s)) +max-32-bytes+)))
+                                           :seqno (%next-seqno s)
+                                           :ackno (%next-ackno s)
+                                           :ack 1))
 
       ;; expose the stream once connection is established
       (setf (%stream s) (make-instance '%socket-stream :socket s)))))
