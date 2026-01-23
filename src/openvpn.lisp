@@ -234,7 +234,7 @@
                            (src-port (tcp-header-src-port tcp-header))
                            (dst-ip (ipv4-header-dst-ip packet-header))
                            (dst-port (tcp-header-dst-port tcp-header))
-                           (key (list src-ip src-port dst-ip dst-port)))
+                           (key (list dst-ip dst-port src-ip src-port)))
                       (bt:with-lock-held ((%connections-lock c))
                         (let ((queue (gethash key (gethash protocol (%connections c)))))
                           ;; TODO: not finding the key here should return a connection refused
@@ -378,14 +378,14 @@
     ;; syn
     (%send-packet client +tcp-protocol+ key tcp-packet)
 
-    (multiple-value-bind (tcp-header rest-stream)
+    (destructuring-bind (tcp-header rest-stream)
         (%receive-packet client +tcp-protocol+ key)
       (declare (ignore rest-stream))
       ;; verify syn-ack is valid
       (assert (= 1 (tcp-header-syn tcp-header)))
       (assert (= 1 (tcp-header-ack tcp-header)))
-      (assert (= (mod (1+ (%seqno s)) +max-32-bytes+) (tcp-header-seqno tcp-header)))
-      (setf (%ackno s) (tcp-header-ackno tcp-header))
+      (assert (= (mod (1+ (%seqno s)) +max-32-bytes+) (tcp-header-ackno tcp-header)))
+      (setf (%ackno s) (tcp-header-seqno tcp-header))
 
       ;; ack
       (%send-packet client
