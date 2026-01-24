@@ -229,6 +229,7 @@
                           (lp.q:push-queue nil queue)))))
 
                    ((= protocol +tcp-protocol+)
+                    ;; TODO: handle RST, FIN
                     (let* ((tcp-header (bin:read-binary 'tcp-header rest-stream))
                            (src-ip (ipv4-header-src-ip packet-header))
                            (src-port (tcp-header-src-port tcp-header))
@@ -330,7 +331,8 @@
   (let ((buffer (make-array size :element-type 'octet)))
     (u:integer-to-octet-buffer n buffer size)))
 
-(defclass %socket-stream (gs:fundamental-binary-stream)
+(defclass %socket-stream (gs:fundamental-binary-input-stream
+                          gs:fundamental-binary-output-stream)
   ((%buffer :accessor %buffer)
    (%socket :initarg :socket :accessor %socket)))
 
@@ -347,7 +349,7 @@
       (write-sequence sequence rest-stream))))
 
 (defmethod gs:stream-write-sequence ((s %socket-stream) sequence start end &key)
-  ;; TODO: should we auto-finish-output at some point?
+  ;; TODO: should we auto-(finish-output) at some point?
   (setf (%buffer s) (concatenate 'octet-vector (%buffer s) (subseq sequence start end))))
 
 (defmethod gs:stream-finish-output ((s %socket-stream))
@@ -356,10 +358,22 @@
          (client (client socket))
          (tcp-packet (%make-ipv4-tcp-packet (%src-ip socket) (%src-port socket)
                                             (%dst-ip socket) (%dst-port socket)
-                                            :seqno (%next-seqno s)
-                                            :ackno (%next-ackno s)
+                                            :ack 1
+                                            :seqno (%seqno socket)
+                                            :ackno (%ackno socket)
+                                            :window (%window socket)
                                             :data (%buffer s))))
-    (%send-packet client +tcp-protocol+ (%key socket) tcp-packet)))
+    (%send-packet client +tcp-protocol+ (%key socket) tcp-packet)
+    (setf (%seqno socket) (+ (%seqno socket) (length (%buffer s))))
+
+    (destructuring-bind (tcp-header rest-stream)
+        (%receive-packet client +tcp-protocol+ (%key socket))
+      (declare (ignore rest-stream))   ; it's going to be empty anyway
+      ;; verify ack
+      (assert (= 1 (tcp-header-ack tcp-header))))
+
+    ;; TODO: figure out how to reset the fill-pointer?
+    (setf (%buffer s) (make-array 0 :element-type 'octet))))
 
 (defclass openvpn-client-socket ()
   ((client :initarg :client :reader client)
@@ -372,7 +386,8 @@
    (%dst-ip :accessor %dst-ip)
    (%dst-port :accessor %dst-port)
    (%seqno :accessor %seqno :initform 0)
-   (%ackno :accessor %ackno)))
+   (%ackno :accessor %ackno)
+   (%window :accessor %window)))
 
 (defmethod %key ((s openvpn-client-socket))
   (list (%src-ip s) (%src-port s) (%dst-ip s) (%dst-port s)))
@@ -419,6 +434,7 @@
       (assert (= 1 (tcp-header-ack tcp-header)))
       (assert (= (mod (1+ (%seqno s)) +max-32-bytes+) (tcp-header-ackno tcp-header)))
       (setf (%ackno s) (tcp-header-seqno tcp-header))
+      (setf (%window s) (tcp-header-window tcp-header))
 
       ;; ack
       (%send-packet client
@@ -428,6 +444,7 @@
                                            dst-ip dst-port
                                            :seqno (%next-seqno s)
                                            :ackno (%next-ackno s)
+                                           :window (%window s)
                                            :ack 1))
 
       ;; expose the stream once connection is established

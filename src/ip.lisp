@@ -68,7 +68,11 @@
          (new-sum (+ sum (ash hi 8) lo)))
     (if (= (length bytes) 2)
         (logand (lognot (%wrap-around-carry new-sum)) #xffff)
-        (%sum-16bits (subseq bytes 2) new-sum))))
+        (%sum-16bits (let ((future-bytes (subseq bytes 2)))
+                       (if (< (length future-bytes) 2)
+                           (concatenate 'octet-vector future-bytes #(0))
+                           future-bytes))
+                     new-sum))))
 
 (defun %wrap-around-carry (sum)
   (if (< sum #xffff)
@@ -104,35 +108,45 @@
 
 (bin:defbinary ipv4-tcp-packet (:byte-order :big-endian)
   (ipv4-header nil :type ipv4-header)
-  (tcp-header nil :type tcp-header))
+  (tcp-header nil :type tcp-header)
+  (payload #() :type (simple-array (unsigned-byte 8) ((- (ipv4-header-total-length ipv4-header)
+                                                         20
+                                                         (length
+                                                          (fs:with-output-to-sequence (s)
+                                                            (bin:write-binary tcp-header s))))))))
 
 (defun %make-ipv4-tcp-packet (src-ip src-port dst-ip dst-port &key
                                                                 seqno
                                                                 (ackno 0)
                                                                 (syn 0)
                                                                 (ack 0)
-                                                                (data #()))
+                                                                (psh 0)
+                                                                (window 1024)
+                                                                data)
   (let* ((tcp-header (make-tcp-header :src-port src-port
                                       :dst-port dst-port
                                       :seqno seqno
                                       :ackno ackno
                                       :syn syn
                                       :ack ack
-                                      :window 1024))
+                                      :psh psh
+                                      :window window))
          (tcp-header-length (length
                              (fs:with-output-to-sequence (s)
                                (bin:write-binary tcp-header s))))
          (tcp-pseudo-header (make-tcp-pseudo-header-for-checksum
                              :src-address src-ip
                              :dst-address dst-ip
-                             :total-length (+ tcp-header-length (length data)))))
+                             :total-length (+ tcp-header-length (length (or data #()))))))
 
     (multiple-value-bind (tcp-header-bytes checksum)
-        (packet-bytes-checksum (list tcp-pseudo-header tcp-header data))
+        (packet-bytes-checksum (list tcp-pseudo-header tcp-header (or data #())))
       (declare (ignore tcp-header-bytes))
       (setf (tcp-header-checksum tcp-header) checksum)
 
-      (let ((ipv4-header (make-ipv4-header :total-length (+ 20 tcp-header-length (length data))
+      (let ((ipv4-header (make-ipv4-header :total-length (+ 20
+                                                            tcp-header-length
+                                                            (length (or data #())))
                                            :protocol +tcp-protocol+
                                            :src-ip src-ip
                                            :dst-ip dst-ip)))
@@ -142,7 +156,8 @@
           (setf (ipv4-header-header-checksum ipv4-header) ipv4-header-checksum)
 
           (make-ipv4-tcp-packet :ipv4-header ipv4-header
-                                :tcp-header tcp-header))))))
+                                :tcp-header tcp-header
+                                :payload (or data (make-array 0 :element-type 'octet))))))))
 
 (defun string-ipv4-address-to-integer (string-address)
   (let* ((parts (uiop:split-string string-address :separator "."))

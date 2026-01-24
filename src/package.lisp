@@ -14,4 +14,5 @@
            #:ping
            #:disconnect
            #:openvpn-client-static-key
-           #:openvpn-connect))
+           #:openvpn-connect
+           #:socket-stream))

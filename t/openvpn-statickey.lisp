@@ -161,9 +161,7 @@ EOF
                             (run-in-container
                              name
                              "
-rm -f /tmp/echo
-mkfifo /tmp/echo
-nohup bash -c 'cat /tmp/echo | nc -lk -p 9999 > /tmp/echo' &
+nohup socat TCP-LISTEN:9999,fork EXEC:'/bin/cat' &
 cd /etc/openvpn
 openvpn --genkey --secret static.key
 chmod 777 static.key
@@ -211,5 +209,7 @@ EOF
              (finish-output socket-stream)
              (let ((buf (make-array 1 :element-type '(unsigned-byte 8))))
                (read-sequence buf socket-stream)
-               (is (elt buf 0) 1)))
+               (is (elt buf 0) 1))
+             ;(socket-close socket)
+             )
         (disconnect openvpn-client)))))
