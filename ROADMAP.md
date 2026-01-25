@@ -99,7 +99,6 @@ Key tasks:
 
 * Implement minimal IP and TCP packet handling
 * Maintain TCP connection state (sequence numbers, ACKs)
-* Handle segmentation and reassembly
 * Map TCP packets to and from VPN data packets
 * Support reliable byte streams over the VPN tunnel
 
@@ -209,11 +208,12 @@ Goal: improve efficiency and robustness after correctness is established.
 
 Potential areas:
 
-* UDP (probably not so optional, just not in the path of an http proxy)
 * socks5 proxy (required if we want to support forwarding UDP)
+* UDP (probably not so optional, just not in the path of an http proxy)
 * Full ICMP feature set
-* Full TCP feature set (RTO, flow control, RACK, congestion control, window scaling, etc.)
+* Full TCP feature set (fragmentation, RTO, flow control, RACK, congestion control, window scaling, etc.)
     See https://en.wikipedia.org/wiki/Transmission_Control_Protocol for a pretty complete list of features
-* Packet batching
+* HTTP/2
+* HTTP/3 (UDP is a dependency)
 
 These are intentionally deferred until all major protocol features are stable.

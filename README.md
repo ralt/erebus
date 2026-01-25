@@ -97,12 +97,12 @@ Longer term:
 
 ## Project status
 
-This is an early-stage project.
+This is an early-stage project. Current support includes:
 
-Expect:
-- incomplete features
-- rough edges
-- changing APIs
+- Long-running connection to openvpn server in static key mode (compatible with most of openvpn options in this mode)
+- Basic userspace ICMP stack (just request/reply)
+- Basic unperformant userspace TCP stack
+    - So basic that there's no support for closing a TCP connection as of right now
 
 The roadmap prioritizes incremental progress and interoperability over completeness.
 
