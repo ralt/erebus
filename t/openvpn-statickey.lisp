@@ -161,7 +161,7 @@ EOF
                             (run-in-container
                              name
                              "
-nohup socat TCP-LISTEN:9999,fork EXEC:'/bin/cat' &
+nohup echo-server &
 cd /etc/openvpn
 openvpn --genkey --secret static.key
 chmod 777 static.key
