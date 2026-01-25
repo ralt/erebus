@@ -9,13 +9,14 @@
    (%socket :accessor %socket)
    (%reader-thread :accessor %reader-thread)
    (%writer-thread :accessor %writer-thread)
-   (%writer-queue :accessor %writer-queue)))
+   (%writer-queue :accessor %writer-queue)
+   (%client-ports :accessor %client-ports :initform nil)))
 
 (defmethod connect ((c vpn-connection))
   (setf (%socket c)
         (u:socket-connect (host c) (port c)
                           :protocol (protocol c)
-                          :element-type '(unsigned-byte 8)))
+                          :element-type 'octet))
   (setf (%writer-queue c) (lp.q:make-queue))
   (setf (%reader-thread c) (bt:make-thread (%reader-loop c) :name "reader thread"))
   (setf (%writer-thread c) (bt:make-thread (%writer-loop c) :name "writer thread")))
@@ -70,3 +71,10 @@
 
 (defmethod send ((c vpn-connection) packet)
   (lp.q:push-queue packet (%writer-queue c)))
+
+(defmethod find-free-client-port ((c vpn-connection))
+  (loop
+    (let ((port (+ 30000 (random 30000))))
+      (unless (member port (%client-ports c))
+        (push port (%client-ports c))
+        (return-from find-free-client-port port)))))

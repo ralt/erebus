@@ -12,7 +12,9 @@
                :lparallel
                :local-time
                :clingon
-               :cl-ini)
+               :cl-ini
+               :alexandria
+               :trivial-gray-streams)
   :in-order-to ((test-op (test-op :erebus/test)))
   :components ((:module "src"
                 :serial t
@@ -28,8 +30,7 @@
 
 (defsystem erebus/test
   :depends-on (:erebus
-               :fiveam
-               :alexandria)
+               :fiveam)
   :components ((:module "t"
                 :serial t
                 :components ((:file "package")

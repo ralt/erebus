@@ -6,11 +6,15 @@
 
 FROM kylemanna/openvpn
 
-RUN apk add nginx
+RUN apk add nginx python3
 
 # We slightly modified easyrsa to not prompt during CA generation. The
 # current upstream has no way to define a CN non-interactively.
 COPY easyrsa /usr/share/easy-rsa/easyrsa
 RUN chmod +x /usr/share/easy-rsa/easyrsa
+
+# easy echo server to deal with
+COPY echo-server /usr/bin/echo-server
+RUN chmod +x /usr/bin/echo-server
 
 CMD ["bash", "-c", "sleep infinity"]

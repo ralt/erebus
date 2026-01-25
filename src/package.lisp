@@ -7,8 +7,13 @@
                     (#:bt #:bordeaux-threads)
                     (#:lp.q #:lparallel.queue)
                     (#:lt #:local-time)
-                    (#:cli #:clingon))
+                    (#:cli #:clingon)
+                    (#:a #:alexandria)
+                    (#:gs #:trivial-gray-streams))
   (:export #:connect
            #:ping
            #:disconnect
-           #:openvpn-client-static-key))
+           #:openvpn-client-static-key
+           #:openvpn-connect
+           #:socket-stream
+           #:econnreset))
