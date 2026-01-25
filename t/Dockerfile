@@ -6,7 +6,7 @@
 
 FROM kylemanna/openvpn
 
-RUN apk add nginx
+RUN apk add nginx python3
 
 # We slightly modified easyrsa to not prompt during CA generation. The
 # current upstream has no way to define a CN non-interactively.

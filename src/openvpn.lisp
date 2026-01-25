@@ -231,6 +231,10 @@
                    ((= protocol +tcp-protocol+)
                     ;; TODO: handle RST, FIN
                     (let* ((tcp-header (bin:read-binary 'tcp-header rest-stream))
+                           (tcp-header-length
+                             (length
+                              (fs:with-output-to-sequence (s)
+                                (bin:write-binary tcp-header s))))
                            (src-ip (ipv4-header-src-ip packet-header))
                            (src-port (tcp-header-src-port tcp-header))
                            (dst-ip (ipv4-header-dst-ip packet-header))
@@ -239,7 +243,10 @@
                       (bt:with-lock-held ((%connections-lock c))
                         (let ((queue (gethash key (gethash protocol (%connections c)))))
                           ;; TODO: not finding the key here should return a connection refused
-                          (lp.q:push-queue (list tcp-header rest-stream) queue)))))))))))
+                          (lp.q:push-queue
+                           (list tcp-header rest-stream (- (ipv4-header-total-length packet-header)
+                                                           20 tcp-header-length))
+                           queue)))))))))))
 
 (defun %receive-packet (c protocol key)
   (let ((queue))
@@ -342,11 +349,18 @@
 (defmethod gs:stream-read-sequence ((s %socket-stream) sequence start end &key)
   (let* ((socket (%socket s))
          (client (client socket)))
-    (destructuring-bind (tcp-header rest-stream)
+    (destructuring-bind (tcp-header rest-stream size)
         (%receive-packet client +tcp-protocol+ (%key socket))
-      (setf (%ackno socket) (tcp-header-seqno tcp-header))
+      (declare (ignore tcp-header))
+      (%next-ackno socket size)
+      (%send-packet client +tcp-protocol+ (%key socket)
+                    (%make-ipv4-tcp-packet (%src-ip socket) (%src-port socket)
+                                           (%dst-ip socket) (%dst-port socket)
+                                           :ack 1
+                                           :seqno (%seqno socket)
+                                           :ackno (%ackno socket)))
 
-      (write-sequence sequence rest-stream))))
+      (read-sequence sequence rest-stream))))
 
 (defmethod gs:stream-write-sequence ((s %socket-stream) sequence start end &key)
   ;; TODO: should we auto-(finish-output) at some point?
@@ -365,9 +379,9 @@
     (%send-packet client +tcp-protocol+ (%key socket) tcp-packet)
     (setf (%seqno socket) (+ (%seqno socket) (length (%buffer s))))
 
-    (destructuring-bind (tcp-header rest-stream)
+    (destructuring-bind (tcp-header rest-stream size)
         (%receive-packet client +tcp-protocol+ (%key socket))
-      (declare (ignore rest-stream))   ; it's going to be empty anyway
+      (declare (ignore rest-stream size))   ; it's going to be empty anyway
       ;; verify ack
       (assert (= 1 (tcp-header-ack tcp-header))))
 
@@ -390,11 +404,11 @@
 (defmethod %key ((s openvpn-client-socket))
   (list (%src-ip s) (%src-port s) (%dst-ip s) (%dst-port s)))
 
-(defmethod %next-seqno ((s openvpn-client-socket))
-  (mod (incf (%seqno s)) +max-32-bytes+))
+(defmethod %next-seqno ((s openvpn-client-socket) &optional (delta 1))
+  (mod (incf (%seqno s) delta) +max-32-bytes+))
 
-(defmethod %next-ackno ((s openvpn-client-socket))
-  (mod (incf (%ackno s)) +max-32-bytes+))
+(defmethod %next-ackno ((s openvpn-client-socket) &optional (delta 1))
+  (mod (incf (%ackno s) delta) +max-32-bytes+))
 
 (defun openvpn-connect (client &key (protocol :stream) host port)
   (make-instance 'openvpn-client-socket
@@ -424,9 +438,9 @@
     ;; syn
     (%send-packet client +tcp-protocol+ key tcp-packet)
 
-    (destructuring-bind (tcp-header rest-stream)
+    (destructuring-bind (tcp-header rest-stream size)
         (%receive-packet client +tcp-protocol+ key)
-      (declare (ignore rest-stream))
+      (declare (ignore rest-stream size))
       ;; verify syn-ack is valid
       (assert (= 1 (tcp-header-syn tcp-header)))
       (assert (= 1 (tcp-header-ack tcp-header)))
