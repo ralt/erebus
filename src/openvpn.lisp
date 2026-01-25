@@ -361,7 +361,6 @@
                                             :ack 1
                                             :seqno (%seqno socket)
                                             :ackno (%ackno socket)
-                                            :window (%window socket)
                                             :data (%buffer s))))
     (%send-packet client +tcp-protocol+ (%key socket) tcp-packet)
     (setf (%seqno socket) (+ (%seqno socket) (length (%buffer s))))
@@ -386,8 +385,7 @@
    (%dst-ip :accessor %dst-ip)
    (%dst-port :accessor %dst-port)
    (%seqno :accessor %seqno :initform 0)
-   (%ackno :accessor %ackno)
-   (%window :accessor %window)))
+   (%ackno :accessor %ackno)))
 
 (defmethod %key ((s openvpn-client-socket))
   (list (%src-ip s) (%src-port s) (%dst-ip s) (%dst-port s)))
@@ -434,7 +432,6 @@
       (assert (= 1 (tcp-header-ack tcp-header)))
       (assert (= (mod (1+ (%seqno s)) +max-32-bytes+) (tcp-header-ackno tcp-header)))
       (setf (%ackno s) (tcp-header-seqno tcp-header))
-      (setf (%window s) (tcp-header-window tcp-header))
 
       ;; ack
       (%send-packet client
@@ -444,7 +441,6 @@
                                            dst-ip dst-port
                                            :seqno (%next-seqno s)
                                            :ackno (%next-ackno s)
-                                           :window (%window s)
                                            :ack 1))
 
       ;; expose the stream once connection is established
