@@ -85,7 +85,7 @@ Outcome:
 * One OpenVPN implementation that can switch between UDP and TCP
 * No protocol logic duplicated between transports
 
-## Phase 4 — Embedded TCP/IP stack over VPN traffic
+## ✅ Phase 4 — Embedded TCP/IP stack over VPN traffic
 
 Goal: implement a TCP/IP stack that runs entirely inside the VPN data channel.
 
