@@ -13,6 +13,7 @@ RUN apk add nginx python3
 COPY easyrsa /usr/share/easy-rsa/easyrsa
 RUN chmod +x /usr/share/easy-rsa/easyrsa
 
+# easy echo server to deal with
 COPY echo-server /usr/bin/echo-server
 RUN chmod +x /usr/bin/echo-server
 

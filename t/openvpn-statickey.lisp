@@ -171,11 +171,11 @@ cat > /etc/openvpn/openvpn.conf <<EOF
 ifconfig 10.8.0.1 10.8.0.2
 verb 9
 keepalive 10 60
-secret static.key 0
+secret static.key
 cipher AES-256-CBC
 auth SHA256
 
-proto tcp-server
+proto udp
 port 1194
 dev tun0
 persist-tun
@@ -194,7 +194,6 @@ EOF
                                                   (make-pathname
                                                    :name "static.key"
                                                    :directory (pathname-directory folder)))
-                                         :key-direction "1"
                                          :cipher "AES-256-CBC"
                                          :auth "SHA256")))
       (connect openvpn-client)
