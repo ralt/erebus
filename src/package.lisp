@@ -15,4 +15,5 @@
            #:disconnect
            #:openvpn-client-static-key
            #:openvpn-connect
-           #:socket-stream))
+           #:socket-stream
+           #:econnreset))

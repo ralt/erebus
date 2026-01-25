@@ -173,10 +173,10 @@
 (bin:defbinary %tcp-packet-length (:byte-order :big-endian)
   (length 0 :type (unsigned-byte 16)))
 
-(defun %send-packet (c protocol key packet)
+(defun %send-packet (c protocol key packet &key skip-connection)
   (let ((serialized-packet (%serialize-packet c packet))
         (queue (lp.q:make-queue)))
-    (when protocol
+    (when (and (not skip-connection) protocol)
       (bt:with-lock-held ((%connections-lock c))
         (setf (gethash key (gethash protocol (%connections c))) queue)))
     (send (%vpn-connection c)
@@ -229,7 +229,7 @@
                           (lp.q:push-queue nil queue)))))
 
                    ((= protocol +tcp-protocol+)
-                    ;; TODO: handle RST, FIN
+                    ;; TODO: handle FIN
                     (let* ((tcp-header (bin:read-binary 'tcp-header rest-stream))
                            (tcp-header-length
                              (length
@@ -240,13 +240,26 @@
                            (dst-ip (ipv4-header-dst-ip packet-header))
                            (dst-port (tcp-header-dst-port tcp-header))
                            (key (list dst-ip dst-port src-ip src-port)))
-                      (bt:with-lock-held ((%connections-lock c))
-                        (let ((queue (gethash key (gethash protocol (%connections c)))))
-                          ;; TODO: not finding the key here should return a connection refused
-                          (lp.q:push-queue
-                           (list tcp-header rest-stream (- (ipv4-header-total-length packet-header)
-                                                           20 tcp-header-length))
-                           queue)))))))))))
+                      (let ((queue))
+                        (bt:with-lock-held ((%connections-lock c))
+                          (setf queue (gethash key (gethash protocol (%connections c)))))
+
+                        (when (= 1 (tcp-header-rst tcp-header))
+                          (return-from %reader-callback
+                            (lp.q:push-queue (make-condition 'econnreset) queue)))
+
+                        (unless queue
+                          (return-from %reader-callback
+                            (%send-packet c +tcp-protocol+ key
+                                          (%make-ipv4-tcp-packet dst-ip dst-port
+                                                                 src-ip src-port
+                                                                 :rst 1)
+                                          :skip-connection t)))
+
+                        (lp.q:push-queue
+                         (list tcp-header rest-stream (- (ipv4-header-total-length packet-header)
+                                                         20 tcp-header-length))
+                         queue))))))))))
 
 (defun %receive-packet (c protocol key)
   (let ((queue))
@@ -255,7 +268,10 @@
     ;; make sure we wait for new item *without* holding the lock, it
     ;; could wait for a while and we want other packets to be
     ;; processed in the meantime.
-    (lp.q:pop-queue queue)))
+    (let ((result (lp.q:pop-queue queue)))
+      (when (eq (type-of result) 'condition)
+        (error result))
+      result)))
 
 (defun %error-callback (c)
   (lambda (condition)

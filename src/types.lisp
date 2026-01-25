@@ -5,3 +5,6 @@
 
 (deftype octet ()
   '(unsigned-byte 8))
+
+(define-condition econnreset (condition)
+  ())

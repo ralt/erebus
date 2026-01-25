@@ -121,6 +121,7 @@
                                                                 (syn 0)
                                                                 (ack 0)
                                                                 (psh 0)
+                                                                (rst 0)
                                                                 (window 1024)
                                                                 data)
   (let* ((tcp-header (make-tcp-header :src-port src-port
@@ -130,6 +131,7 @@
                                       :syn syn
                                       :ack ack
                                       :psh psh
+                                      :rst rst
                                       :window window))
          (tcp-header-length (length
                              (fs:with-output-to-sequence (s)
