@@ -194,13 +194,6 @@ After decryption, the plaintext has the following structure:
 
 ---
 
-Yep — that’s a much better, *truer-to-OpenVPN* justification.
-Below is **only the revised compression subsection**, rewritten to reflect OpenVPN’s own rationale and tone, while keeping the rest of the document unchanged.
-
-You can drop this in verbatim to replace **Section 9.2 (Compression Byte → OpenVPN Recommendation)**.
-
----
-
 ### 9.2 Compression Byte
 
 | Value | Meaning         |
