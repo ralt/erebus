@@ -23,6 +23,7 @@
                              (:file "ip")
                              (:file "vpn-connection")
                              (:file "openvpn")
+                             (:file "socket")
                              (:file "main"))))
   :build-operation "program-op"
   :build-pathname "erebus"

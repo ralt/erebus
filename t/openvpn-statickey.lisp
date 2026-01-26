@@ -198,10 +198,10 @@ EOF
                                          :auth "SHA256")))
       (connect openvpn-client)
       (unwind-protect
-           (let* ((socket (openvpn-connect openvpn-client
-                                           :protocol :stream
-                                           :host "10.8.0.1"
-                                           :port 9999))
+           (let* ((socket (socket-connect openvpn-client
+                                          :protocol :stream
+                                          :host "10.8.0.1"
+                                          :port 9999))
                   (socket-stream (socket-stream socket))
                   (buf (make-array 1 :element-type '(unsigned-byte 8) :initial-contents '(1))))
              (write-sequence buf socket-stream)
