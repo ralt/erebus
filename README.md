@@ -119,4 +119,4 @@ This lets you quickly setup a development environment with openvpn server runnin
 
 ## License
 
-MIT License.
+GPLv3 License.
