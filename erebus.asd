@@ -14,7 +14,8 @@
                :clingon
                :cl-ini
                :alexandria
-               :trivial-gray-streams)
+               :trivial-gray-streams
+               :hunchentoot)
   :in-order-to ((test-op (test-op :erebus/test)))
   :components ((:module "src"
                 :serial t
@@ -24,6 +25,7 @@
                              (:file "vpn-connection")
                              (:file "openvpn")
                              (:file "socket")
+                             (:file "http")
                              (:file "main"))))
   :build-operation "program-op"
   :build-pathname "erebus"

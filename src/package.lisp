@@ -9,7 +9,8 @@
                     (#:lt #:local-time)
                     (#:cli #:clingon)
                     (#:a #:alexandria)
-                    (#:gs #:trivial-gray-streams))
+                    (#:gs #:trivial-gray-streams)
+                    (#:h #:hunchentoot))
   (:export #:connect
            #:ping
            #:disconnect
