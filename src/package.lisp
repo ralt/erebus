@@ -10,7 +10,8 @@
                     (#:cli #:clingon)
                     (#:a #:alexandria)
                     (#:gs #:trivial-gray-streams)
-                    (#:h #:hunchentoot))
+                    (#:h #:hunchentoot)
+                    (#:b #:babel))
   (:export #:connect
            #:ping
            #:disconnect
