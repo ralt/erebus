@@ -15,7 +15,8 @@
                :cl-ini
                :alexandria
                :trivial-gray-streams
-               :hunchentoot)
+               :hunchentoot
+               :cl-ppcre)
   :in-order-to ((test-op (test-op :erebus/test)))
   :components ((:module "src"
                 :serial t
