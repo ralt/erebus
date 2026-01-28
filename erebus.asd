@@ -34,7 +34,8 @@
 
 (defsystem erebus/test
   :depends-on (:erebus
-               :fiveam)
+               :fiveam
+               :drakma)
   :components ((:module "t"
                 :serial t
                 :components ((:file "package")

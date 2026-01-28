@@ -62,6 +62,7 @@
           (let* ((status-line (read-line in))
                  (parts (uiop:split-string status-line :separator " ")))
             (setf (h:return-code*) (parse-integer (second parts))))
+
           (block headers
             (loop
               (let ((line (uiop:stripln (read-line in))))
@@ -73,6 +74,7 @@
                   (cond ((string= header-name "content-length")
                          (setf (h:header-out header-name) (parse-integer header-value)))
                         (t (setf (h:header-out header-name) header-value)))))))
+
           (uiop:slurp-stream-string in))))))
 
 (defun %parse-host-header (request)

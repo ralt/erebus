@@ -127,7 +127,9 @@ Key tasks:
 * Implement local HTTP proxy listener
 * Translate HTTP requests into TCP connections over the VPN
 * Forward responses back to local clients
-* Support multiple concurrent proxied connections
+* TCP fragmentation to handle responses bigger than 1kB
+* Hostname addresses instead of IP addresses
+* Support for closing TCP connections and keep-alive
 
 Outcome:
 
