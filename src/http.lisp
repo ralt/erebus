@@ -13,7 +13,7 @@
       (%parse-host-header request)
     (let* ((socket (socket-connect (%client a)
                                    :protocol :stream
-                                   :host host
+                                   :host (%resolve-hostname host)
                                    :port port))
            (socket-stream (socket-stream socket)))
       ;; We have to manually input the headers, then the body can be
@@ -83,3 +83,6 @@
          (host (first parts))
          (port-str (or (second parts) "80")))
     (values host (parse-integer port-str))))
+
+(defun %resolve-hostname (host)
+  (format nil "~{~a~^.~}" (coerce (u:get-host-by-name host) 'list)))

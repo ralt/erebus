@@ -257,8 +257,9 @@ Potential areas:
 
 * socks5 proxy (required if we want to support forwarding UDP)
 * UDP (probably not so optional, just not in the path of an http proxy)
+* Proxy to TLS backends
 * Full ICMP feature set
-* Full TCP feature set (fragmentation, RTO, flow control, RACK, congestion control, window scaling, etc.)
+* Full TCP feature set (RTO, flow control, RACK, congestion control, window scaling, etc.)
     See https://en.wikipedia.org/wiki/Transmission_Control_Protocol for a pretty complete list of features
 * HTTP/2
 * HTTP/3 (UDP is a dependency)
