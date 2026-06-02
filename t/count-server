@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+
+# Tiny TCP server used to test large *outbound* writes over erebus's
+# userspace TCP stack. Protocol: the client sends a 4-byte big-endian
+# length N followed by N bytes of payload; the server replies with the
+# number of payload bytes it actually received, as ASCII digits followed
+# by a newline. This lets a test confirm that a payload larger than a
+# single TCP segment makes it across intact (it must be split into
+# several segments, since one oversized IP packet exceeds the VPN MTU and
+# is dropped).
+
+import socket
+import struct
+import threading
+
+
+def recvn(conn, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = conn.recv(min(65536, n - len(buf)))
+        if not chunk:
+            break
+        buf += chunk
+    return buf
+
+
+def handle(conn):
+    header = recvn(conn, 4)
+    if len(header) == 4:
+        (n,) = struct.unpack(">I", header)
+        body = recvn(conn, n)
+        conn.sendall(str(len(body)).encode() + b"\n")
+    conn.close()
+
+
+def main():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("0.0.0.0", 9998))
+    s.listen(8)
+    print("Count server listening on port 9998...")
+    while True:
+        conn, _ = s.accept()
+        threading.Thread(target=handle, args=(conn,), daemon=True).start()
+
+
+main()

@@ -19,4 +19,14 @@ RUN chmod +x /usr/share/easy-rsa/easyrsa
 COPY echo-server /usr/bin/echo-server
 RUN chmod +x /usr/bin/echo-server
 
+# server that counts the bytes of a length-prefixed payload, used to test
+# large outbound writes (TCP segmentation of requests)
+COPY count-server /usr/bin/count-server
+RUN chmod +x /usr/bin/count-server
+
+# HTTP server that echoes the received request-body length, used to test
+# the proxy's request path (including large POST bodies)
+COPY http-echo-server /usr/bin/http-echo-server
+RUN chmod +x /usr/bin/http-echo-server
+
 CMD ["bash", "-c", "sleep infinity"]
