@@ -17,6 +17,8 @@
            #:disconnect
            #:openvpn-client-static-key
            #:openvpn-connect
+           #:socket-connect
            #:socket-stream
+           #:socket-close
            #:econnreset
            #:acceptor))

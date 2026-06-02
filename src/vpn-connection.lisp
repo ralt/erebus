@@ -78,3 +78,6 @@
       (unless (member port (%client-ports c))
         (push port (%client-ports c))
         (return-from find-free-client-port port)))))
+
+(defmethod release-client-port ((c vpn-connection) port)
+  (setf (%client-ports c) (remove port (%client-ports c))))

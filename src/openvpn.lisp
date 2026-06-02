@@ -174,11 +174,15 @@
   (length 0 :type (unsigned-byte 16)))
 
 (defmethod send-packet ((c openvpn-client-static-key) protocol key packet &key skip-connection)
-  (let ((serialized-packet (%serialize-packet c packet))
-        (queue (lp.q:make-queue)))
+  (let ((serialized-packet (%serialize-packet c packet)))
     (when (and (not skip-connection) protocol)
       (bt:with-lock-held ((%connections-lock c))
-        (setf (gethash key (gethash protocol (%connections c))) queue)))
+        ;; Create the connection queue lazily and *keep it for the
+        ;; lifetime of the connection*. Recreating it on every send
+        ;; would drop inbound packets that arrived between two of our
+        ;; sends, which breaks multi-segment (fragmented) reads.
+        (unless (gethash key (gethash protocol (%connections c)))
+          (setf (gethash key (gethash protocol (%connections c))) (lp.q:make-queue)))))
     (send (%vpn-connection c)
           (cond ((eq (protocol c) :stream)
                  (concatenate 'octet-vector (fs:with-output-to-sequence (s)
@@ -190,10 +194,12 @@
                 ((eq (protocol c) :datagram) serialized-packet)))
     ;; we only want to wait for ICMP, other protocols are rather stream oriented
     (when (eq protocol +icmp-protocol+)
-      (let ((result (lp.q:pop-queue queue)))
-        (when (eq (type-of result) 'condition)
-          (error result))
-        result))))
+      (let ((queue (bt:with-lock-held ((%connections-lock c))
+                     (gethash key (gethash protocol (%connections c))))))
+        (let ((result (lp.q:pop-queue queue)))
+          (when (eq (type-of result) 'condition)
+            (error result))
+          result)))))
 
 (defun %reader-callback-udp (c)
   (lambda (buffer size)
@@ -273,6 +279,16 @@
         (error result))
       result)))
 
+(defmethod remove-connection ((c openvpn-client-static-key) protocol key)
+  (bt:with-lock-held ((%connections-lock c))
+    (remhash key (gethash protocol (%connections c)))))
+
+(defmethod find-free-client-port ((c openvpn-client-static-key))
+  (find-free-client-port (%vpn-connection c)))
+
+(defmethod release-client-port ((c openvpn-client-static-key) port)
+  (release-client-port (%vpn-connection c) port))
+
 (defun %error-callback (c)
   (lambda (condition)
     ;; just push the error to all the ongoing connections
@@ -346,9 +362,6 @@
                      (values :ping buffer)))
                   ((= first-byte #x28)  ; OCC packet; ignore
                    :ping))))))))
-
-(defmethod find-free-client-port ((c openvpn-client-static-key))
-  (find-free-client-port (%vpn-connection c)))
 
 (defun %integer-to-octets (n size)
   (let ((buffer (make-array size :element-type 'octet)))
