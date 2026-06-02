@@ -254,12 +254,19 @@
                           (return-from %reader-callback
                             (lp.q:push-queue (make-condition 'econnreset) queue)))
 
+                        ;; nothing is listening on this 4-tuple (e.g. a
+                        ;; packet arriving after we tore the connection
+                        ;; down): reset the peer. The RST's sequence number
+                        ;; must be the ack number of the packet we're
+                        ;; replying to, otherwise the peer ignores it as
+                        ;; out of window.
                         (unless queue
                           (return-from %reader-callback
                             (send-packet c +tcp-protocol+ key
                                           (%make-ipv4-tcp-packet dst-ip dst-port
                                                                  src-ip src-port
-                                                                 :rst 1)
+                                                                 :rst 1
+                                                                 :seqno (tcp-header-ackno tcp-header))
                                           :skip-connection t)))
 
                         (lp.q:push-queue
