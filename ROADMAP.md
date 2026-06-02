@@ -112,7 +112,7 @@ Outcome:
 * A functional TCP/IP stack embedded inside VPN traffic
 * Foundation for higher-level protocols (e.g. HTTP) without OS-level networking
 
-## Phase 5 — Local HTTP proxy over OpenVPN
+## ✅ Phase 5 — Local HTTP proxy over OpenVPN
 
 Goal: expose VPN access through a local, developer-friendly interface.
 
@@ -127,7 +127,7 @@ Key tasks:
 * Implement local HTTP proxy listener
 * Translate HTTP requests into TCP connections over the VPN
 * Forward responses back to local clients
-* TCP fragmentation to handle responses bigger than 1kB
+* TCP fragmentation to handle responses bigger than 1kB (and, symmetrically, request bodies bigger than one segment)
 * Hostname addresses instead of IP addresses
 * Support for closing TCP connections and keep-alive
 
