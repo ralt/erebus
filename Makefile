@@ -18,4 +18,8 @@ test:
 verify:
 	$(LISP) --script t/manual-verify.lisp
 
-.PHONY: test verify
+# Performance comparison of the proxy against tinyproxy and a direct fetch.
+stress:
+	$(LISP) --script t/stress.lisp
+
+.PHONY: test verify stress
