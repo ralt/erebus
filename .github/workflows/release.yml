@@ -68,9 +68,11 @@ jobs:
     name: publish release
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref_type == 'tag'
+    # Run on any tag build even if some matrix legs failed, so a confirmed
+    # package still ships when an untested distro leg breaks.
+    if: ${{ always() && github.ref_type == 'tag' }}
     steps:
-      - name: Download all package artifacts
+      - name: Download package artifacts that built
         uses: actions/download-artifact@v4
         with:
           path: dist
@@ -83,5 +85,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          fail_on_unmatched_files: true
+          # don't fail the release if a distro leg produced nothing
+          fail_on_unmatched_files: false
           generate_release_notes: true
