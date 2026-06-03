@@ -116,7 +116,7 @@
                                                             (bin:write-binary tcp-header s))))))))
 
 (defun %make-ipv4-tcp-packet (src-ip src-port dst-ip dst-port &key
-                                                                seqno
+                                                                (seqno 0)
                                                                 (ackno 0)
                                                                 (syn 0)
                                                                 (ack 0)

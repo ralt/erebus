@@ -7,10 +7,49 @@
 (def-suite erebus
   :description "Erebus test suite")
 
+;; The default *RANDOM-STATE* is identical in every fresh image, so
+;; RANDOM-STRING (container names) and the random ports below would
+;; otherwise repeat across separate test runs and collide in docker.
+;; Seed it from OS entropy (/dev/urandom on SBCL), like MAIN does.
+(setf *random-state* (make-random-state t))
+
 (defun random-string (length)
   (funcall
    (gen-string :length (gen-integer :min length :max length)
                :elements (gen-character :code (gen-integer :min 97 :max 122)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Docker container plumbing
+;;;
+;;; These helpers stand on their own so they can be driven both by the
+;;; WITH-DOCKER-CONTAINER macro (automated tests) and by the DEV-* helpers
+;;; further down (interactive, manual testing from the REPL).
+;;; ---------------------------------------------------------------------------
+
+(defun erebus-test-dir ()
+  (merge-pathnames "t/" (asdf:system-source-directory :erebus/test)))
+
+(defun junk-dir ()
+  (merge-pathnames "junk/" (erebus-test-dir)))
+
+(defun container-folder (name)
+  (merge-pathnames (make-pathname :directory (list :relative name)) (junk-dir)))
+
+(defun ensure-test-image ()
+  "Build the ralt/erebus:latest docker image, but only when the Dockerfile
+has changed since the last build (tracked with a stamp file)."
+  (let* ((dir (erebus-test-dir))
+         (dockerfile (probe-file (merge-pathnames "Dockerfile" dir)))
+         (stamp-name (merge-pathnames ".git-ignore-me-container" dir))
+         (stamp (probe-file stamp-name)))
+    (when (or (not stamp)
+              (> (file-write-date dockerfile) (file-write-date stamp)))
+      (uiop:run-program (format nil "cd ~a && docker build -t ralt/erebus:latest ."
+                                (namestring dir))
+                        :output t :error-output t)
+      ;; a quick version of "touch" that updates the mtime every run
+      (close (open stamp-name :direction :output
+                              :if-exists :supersede :if-does-not-exist :create)))))
 
 (defun create-container (name folder vpn-local-port)
   (ensure-directories-exist folder)
@@ -81,39 +120,188 @@
    :output t :error-output t)
   (uiop:delete-directory-tree folder :validate t))
 
-(defmacro with-docker-container ((container-name container-folder vpn-local-port &optional (prepare-hook (lambda (name container) (declare (ignore name container))))) &body body)
-  (a:with-gensyms (erebus-test-folder
-                   junk
-                   dockerfile
-                   ignore-me-file
-                   ignore-me-filename)
-    `(let* ((,erebus-test-folder
-              (merge-pathnames "t/"
-                               (asdf:system-source-directory :erebus/test)))
-            (,junk (merge-pathnames "junk/" ,erebus-test-folder))
-            (,dockerfile (probe-file
-                          (merge-pathnames "Dockerfile" ,erebus-test-folder)))
-            (,ignore-me-filename (merge-pathnames ".git-ignore-me-container" ,erebus-test-folder))
-            (,ignore-me-file (probe-file ,ignore-me-filename)))
-       (when (or
-              (not ,ignore-me-file)
-              (> (file-write-date ,dockerfile)
-                 (file-write-date ,ignore-me-file)))
-         (uiop:run-program "cd t; docker build -t ralt/erebus:latest ." :output t :error-output t)
-         ;; a quick version of "touch" that updates the mtime on a new file every time it runs
-         (close
-          (open ,ignore-me-filename :direction :output :if-exists :supersede :if-does-not-exist :create)))
-       (let* ((,container-name (format nil "erebus_~a" (random-string 20)))
-              (,container-folder (merge-pathnames (make-pathname :directory
-                                                                 (list :relative ,container-name))
-                                                  ,junk))
-              (,vpn-local-port (funcall (gen-integer :min 10000 :max 60000))))
-         (unwind-protect
-              (progn
-                (create-container ,container-name ,container-folder ,vpn-local-port)
-                (prepare-container ,container-name ,container-folder)
-                (funcall ,prepare-hook ,container-name ,container-folder)
-                (start-services ,container-name)
+;;; ---------------------------------------------------------------------------
+;;; OpenVPN server configuration helpers
+;;; ---------------------------------------------------------------------------
 
-                (progn ,@body))
-           (cleanup-container ,container-name ,container-folder))))))
+(defun openvpn-server-config (&key (proto "udp") (secret "secret static.key")
+                                   (cipher "AES-256-CBC") (auth "SHA256") (verb 3))
+  "Render an openvpn.conf for a static-key server. PROTO is \"udp\" or
+\"tcp-server\". SECRET is the full secret directive, e.g. \"secret
+static.key\" or \"secret static.key 0\"."
+  (format nil "ifconfig 10.8.0.1 10.8.0.2
+verb ~a
+keepalive 10 60
+persist-tun
+~a
+cipher ~a
+auth ~a
+
+proto ~a
+port 1194
+dev tun0
+status /tmp/openvpn-status.log
+log /etc/openvpn/openvpn.log
+user nobody
+group nogroup
+comp-lzo no
+"
+          verb secret cipher auth proto))
+
+(defun configure-openvpn (name &rest config-args &key pre &allow-other-keys)
+  "Generate a fresh static key inside container NAME and write an
+openvpn.conf there. PRE, when supplied, is a shell snippet run first (for
+instance to launch a backend service). Remaining keyword args are passed
+to OPENVPN-SERVER-CONFIG."
+  (run-in-container
+   name
+   (format nil "~@[~a~%~]cd /etc/openvpn
+openvpn --genkey --secret static.key
+chmod 777 static.key
+rm -rf ccd/ crl.pem pki/ # delete those or ovpn_run will try to use them
+
+cat > /etc/openvpn/openvpn.conf <<'EOF'
+~aEOF
+"
+           pre
+           (apply #'openvpn-server-config (a:remove-from-plist config-args :pre)))))
+
+(defun openvpn-prep-hook (&rest config-args)
+  "Return a prepare-hook (a function of NAME and FOLDER) for
+WITH-DOCKER-CONTAINER that configures the server with CONFIG-ARGS."
+  (lambda (name folder)
+    (declare (ignore folder))
+    (apply #'configure-openvpn name config-args)))
+
+;;; ---------------------------------------------------------------------------
+;;; Erebus client / proxy helpers
+;;; ---------------------------------------------------------------------------
+
+(defun make-test-client (folder vpn-local-port &rest initargs)
+  "Make an openvpn-client-static-key pointing at the server published on
+VPN-LOCAL-PORT, using the static.key in FOLDER. INITARGS override the
+defaults (e.g. :protocol :stream, :key-direction \"1\")."
+  (apply #'make-instance 'openvpn-client-static-key
+         (append initargs
+                 (list :host "localhost"
+                       :port vpn-local-port
+                       :client-ip "10.8.0.2"
+                       :secret (namestring
+                                (make-pathname :name "static.key"
+                                               :directory (pathname-directory folder)))
+                       :cipher "AES-256-CBC"
+                       :auth "SHA256"))))
+
+(defmacro with-test-client ((client folder vpn-local-port &rest initargs) &body body)
+  "Bind CLIENT to a connected test client and disconnect it afterwards."
+  `(let ((,client (make-test-client ,folder ,vpn-local-port ,@initargs)))
+     (connect ,client)
+     (unwind-protect (progn ,@body)
+       (disconnect ,client))))
+
+(defun uint32-be (n)
+  "N as a 4-byte big-endian octet vector."
+  (make-array 4 :element-type '(unsigned-byte 8)
+                :initial-contents (list (ldb (byte 8 24) n)
+                                        (ldb (byte 8 16) n)
+                                        (ldb (byte 8 8) n)
+                                        (ldb (byte 8 0) n))))
+
+(defun read-line-from-octet-stream (stream)
+  "Read a newline-terminated ASCII line from a binary STREAM (without the
+newline)."
+  (with-output-to-string (out)
+    (loop for b = (read-byte stream nil :eof)
+          until (or (eq b :eof) (= b 10))
+          do (write-char (code-char b) out))))
+
+(defmacro with-proxy ((proxy-port client) &body body)
+  "Start an erebus HTTP proxy bound to CLIENT on a random local port,
+bind PROXY-PORT to it for the duration of BODY, and stop it afterwards."
+  (a:with-gensyms (acceptor)
+    `(let* ((,proxy-port (funcall (gen-integer :min 5000 :max 10000)))
+            (,acceptor (make-instance 'acceptor
+                                      :port ,proxy-port
+                                      :address "127.0.0.1"
+                                      :client ,client)))
+       (hunchentoot:start ,acceptor)
+       (unwind-protect (progn ,@body)
+         (hunchentoot:stop ,acceptor)))))
+
+;;; ---------------------------------------------------------------------------
+;;; WITH-DOCKER-CONTAINER: spins a container up, runs BODY, tears it down
+;;; ---------------------------------------------------------------------------
+
+(defmacro with-docker-container ((container-name
+                                  container-folder
+                                  vpn-local-port
+                                  &optional (prepare-hook (lambda (name folder)
+                                                            (declare (ignore name folder)))))
+                                 &body body)
+  `(progn
+     (ensure-test-image)
+     (let* ((,container-name (format nil "erebus_~a" (random-string 20)))
+            (,container-folder (container-folder ,container-name))
+            (,vpn-local-port (funcall (gen-integer :min 10000 :max 60000))))
+       ;; BODY may not use every binding (e.g. NAME); mark them ignorable
+       ;; here so callers never need their own DECLARE.
+       (declare (ignorable ,container-name ,container-folder ,vpn-local-port))
+       (unwind-protect
+            (progn
+              (create-container ,container-name ,container-folder ,vpn-local-port)
+              (prepare-container ,container-name ,container-folder)
+              (funcall ,prepare-hook ,container-name ,container-folder)
+              (start-services ,container-name)
+              (progn ,@body))
+         (cleanup-container ,container-name ,container-folder)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Manual, interactive testing from the REPL
+;;;
+;;; Typical session:
+;;;   (in-package :erebus/test)
+;;;   (dev-vpn-up)                         ; or (dev-vpn-up :proto "tcp-server")
+;;;   (defparameter *c (dev-client))       ; for :stream pass (dev-client :protocol :stream)
+;;;   (defparameter *p (dev-proxy *c))     ; HTTP proxy on localhost:11023
+;;;   ;; in a shell: http_proxy=http://localhost:11023 curl http://10.8.0.1
+;;;   (hunchentoot:stop *p)
+;;;   (disconnect *c)
+;;;   (dev-vpn-down)
+;;; ---------------------------------------------------------------------------
+
+(defvar *dev-container* nil "Name of the running manual dev container, if any.")
+(defvar *dev-folder* nil "Host config folder of the running manual dev container.")
+(defvar *dev-port* nil "Local published VPN port of the running manual dev container.")
+
+(defun dev-vpn-up (&rest config-args &key (name "erebus-dev") (port 11194) &allow-other-keys)
+  "Bring up a long-running openvpn container for manual testing and leave
+it running. Returns (values name folder port). CONFIG-ARGS are forwarded
+to CONFIGURE-OPENVPN (e.g. :proto \"tcp-server\", :pre \"nohup echo-server &\")."
+  (ensure-test-image)
+  (let ((folder (container-folder name)))
+    (create-container name folder port)
+    (prepare-container name folder)
+    (apply #'configure-openvpn name (a:remove-from-plist config-args :name :port))
+    (start-services name)
+    (setf *dev-container* name *dev-folder* folder *dev-port* port)
+    (values name folder port)))
+
+(defun dev-vpn-down (&optional (name *dev-container*))
+  "Tear down the manual dev container brought up with DEV-VPN-UP."
+  (when name
+    (cleanup-container name (container-folder name))
+    (setf *dev-container* nil *dev-folder* nil *dev-port* nil)))
+
+(defun dev-client (&rest initargs)
+  "Build and connect an erebus client against the running dev container.
+Returns the connected client; remember to (disconnect ...) it."
+  (let ((client (apply #'make-test-client *dev-folder* *dev-port* initargs)))
+    (connect client)
+    client))
+
+(defun dev-proxy (client &key (port 11023))
+  "Start an erebus HTTP proxy on PORT against CLIENT and return the
+acceptor; (hunchentoot:stop ...) it when done."
+  (let ((acceptor (make-instance 'acceptor :address "127.0.0.1" :port port :client client)))
+    (hunchentoot:start acceptor)
+    acceptor))

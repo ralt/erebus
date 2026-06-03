@@ -112,7 +112,7 @@ Outcome:
 * A functional TCP/IP stack embedded inside VPN traffic
 * Foundation for higher-level protocols (e.g. HTTP) without OS-level networking
 
-## Phase 5 — Local HTTP proxy over OpenVPN
+## ✅ Phase 5 — Local HTTP proxy over OpenVPN
 
 Goal: expose VPN access through a local, developer-friendly interface.
 
@@ -127,7 +127,9 @@ Key tasks:
 * Implement local HTTP proxy listener
 * Translate HTTP requests into TCP connections over the VPN
 * Forward responses back to local clients
-* Support multiple concurrent proxied connections
+* TCP fragmentation to handle responses bigger than 1kB (and, symmetrically, request bodies bigger than one segment)
+* Hostname addresses instead of IP addresses
+* Support for closing TCP connections and keep-alive
 
 Outcome:
 
@@ -255,8 +257,9 @@ Potential areas:
 
 * socks5 proxy (required if we want to support forwarding UDP)
 * UDP (probably not so optional, just not in the path of an http proxy)
+* Proxy to TLS backends
 * Full ICMP feature set
-* Full TCP feature set (fragmentation, RTO, flow control, RACK, congestion control, window scaling, etc.)
+* Full TCP feature set (RTO, flow control, RACK, congestion control, window scaling, etc.)
     See https://en.wikipedia.org/wiki/Transmission_Control_Protocol for a pretty complete list of features
 * HTTP/2
 * HTTP/3 (UDP is a dependency)

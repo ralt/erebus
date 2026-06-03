@@ -102,7 +102,10 @@ This is an early-stage project. Current support includes:
 - Long-running connection to openvpn server in static key mode (compatible with most of openvpn options in this mode)
 - Basic userspace ICMP stack (just request/reply)
 - Basic unperformant userspace TCP stack
-    - So basic that there's no support for closing a TCP connection as of right now
+    - Connection setup (SYN/SYN-ACK/ACK) and orderly teardown (FIN handshake)
+    - Reads and writes spanning multiple segments, so payloads larger than one TCP segment work in both directions (responses *and* requests)
+- A local HTTP/1.x proxy that forwards requests to VPN resources over the userspace TCP stack
+    - Resolves hostnames, follows `Content-Length` / chunked / close-delimited response framing, and keeps the local client connection alive
 
 The roadmap prioritizes incremental progress and interoperability over completeness.
 
@@ -114,8 +117,37 @@ In order to help out during development, the `erebus/test` package provides a fe
 - `(prepare-container NAME FOLDER)`: runs all the preparation steps for the openvpn server configuration
 - `(start-services NAME)`: starts openvpn and nginx
 - `(cleanup-container NAME FOLDER)`: cleanups the container and its folder
+- `(run-in-container NAME COMMAND)`: runs an arbitrary shell command inside the container
 
-This lets you quickly setup a development environment with openvpn server running inside a docker container. You can edit the configuration in `FOLDER` after `prepare-container` and before `start-services`. Quick tip though: you need to do that from within a container; feel free to use `(run-container NAME COMMAND)`: the `FOLDER` will have root permissions, so you most likely won't be able to edit it from the REPL directly.
+This lets you quickly setup a development environment with openvpn server running inside a docker container. You can edit the configuration in `FOLDER` after `prepare-container` and before `start-services`. Quick tip though: you need to do that from within a container; feel free to use `(run-in-container NAME COMMAND)`: the `FOLDER` will have root permissions, so you most likely won't be able to edit it from the REPL directly.
+
+### Manual, interactive testing
+
+For poking at a running setup by hand (rather than through the automated test suite), the `erebus/test` package exposes a small REPL workflow that spins a container up, leaves it running, and points a real erebus proxy at it:
+
+```lisp
+(in-package :erebus/test)
+
+(dev-vpn-up)                      ; build the image if needed, start an openvpn container
+                                  ; (e.g. (dev-vpn-up :proto "tcp-server") for TCP)
+(defparameter *c (dev-client))    ; connect an erebus client (pass :protocol :stream for TCP)
+(defparameter *p (dev-proxy *c))  ; start the HTTP proxy on localhost:11023
+
+;; now, from a shell:
+;;   http_proxy=http://localhost:11023 curl http://10.8.0.1
+
+(hunchentoot:stop *p)
+(disconnect *c)
+(dev-vpn-down)                    ; tear the container down
+```
+
+There is also a one-shot smoke test that exercises the whole proxy path (404, a large fragmented response, and a `Connection: close` request) against a throwaway container:
+
+```sh
+sbcl --script t/manual-verify.lisp
+```
+
+`dev-vpn-up` accepts the same options as the server-config helper, so for example a backend service can be launched alongside openvpn with `(dev-vpn-up :pre "nohup echo-server &")`.
 
 ## License
 

@@ -9,11 +9,16 @@
                     (#:lt #:local-time)
                     (#:cli #:clingon)
                     (#:a #:alexandria)
-                    (#:gs #:trivial-gray-streams))
+                    (#:gs #:trivial-gray-streams)
+                    (#:h #:hunchentoot)
+                    (#:b #:babel))
   (:export #:connect
            #:ping
            #:disconnect
            #:openvpn-client-static-key
            #:openvpn-connect
+           #:socket-connect
            #:socket-stream
-           #:econnreset))
+           #:socket-close
+           #:econnreset
+           #:acceptor))
