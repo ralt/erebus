@@ -252,7 +252,12 @@ connection. Tear it down after BODY."
   (a:with-gensyms (listen thread)
     `(let* ((,listen (usocket:socket-listen "127.0.0.1" 0
                                             :element-type '(unsigned-byte 8)
-                                            :reuse-address t))
+                                            :reuse-address t
+                                            ;; big enough to absorb a burst of
+                                            ;; concurrent connections (the
+                                            ;; inbound stress test) without the
+                                            ;; OS dropping/resetting them.
+                                            :backlog 128))
             (,port (usocket:get-local-port ,listen))
             (,thread (bordeaux-threads:make-thread (%serve-local ,listen ,handler)
                                                    :name "local tcp server")))

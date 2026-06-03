@@ -22,4 +22,9 @@ verify:
 stress:
 	$(LISP) --script t/stress.lisp
 
-.PHONY: test verify stress
+# Correctness stress test of inbound port-forwarding: many concurrent
+# connections from the VPN side, verifying every transfer round-trips.
+stress-inbound:
+	$(LISP) --script t/stress-inbound.lisp
+
+.PHONY: test verify stress stress-inbound

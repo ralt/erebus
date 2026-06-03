@@ -289,38 +289,51 @@ arithmetic from the server side."
       (assert (= 0 (tcp-header-ack tcp-header)))
       (setf (%ackno s) (tcp-header-seqno tcp-header)))
 
-    ;; syn-ack
-    (send-packet client +tcp-protocol+ key
-                 (%make-ipv4-tcp-packet (%src-ip s) (%src-port s)
-                                        (%dst-ip s) (%dst-port s)
-                                        :syn 1
-                                        :ack 1
-                                        :seqno (%next-seqno s)
-                                        :ackno (%next-ackno s)))
-
-    ;; expose the stream now, so that a final ACK piggybacking the first
-    ;; data segment (a single ACK+PSH packet) is not lost.
-    (setf (%stream s) (make-instance '%socket-stream :socket s))
-
-    ;; the peer's final ACK (may already carry data)
-    (let ((stream (socket-stream s)))
-      (destructuring-bind (tcp-header rest-stream size)
-          (receive-packet client +tcp-protocol+ key)
-        (assert (= 1 (tcp-header-ack tcp-header)))
-        (assert (= (mod (1+ (%seqno s)) +max-32-bytes+) (tcp-header-ackno tcp-header)))
-        ;; our SYN-ACK consumed one sequence number.
-        (%next-seqno s)
-        (let ((fin (= 1 (tcp-header-fin tcp-header))))
-          (when (> size 0)
-            (let ((buffer (make-array size :element-type 'octet)))
-              (read-sequence buffer rest-stream)
-              (%next-ackno s (+ size (if fin 1 0)))
-              (%send-ack s)
-              (%stash-read stream buffer)))
-          (when (and fin (zerop size))
-            (%next-ackno s 1)
-            (%send-ack s)
-            (setf (%eof s) t)))))))
+    ;; prepare our SYN-ACK's sequence numbers: it occupies one sequence
+    ;; number (like a SYN) and acknowledges the peer's SYN. We advance now
+    ;; so a retransmitted SYN-ACK carries the same numbers.
+    (%next-seqno s)                     ; our ISN+1
+    (%next-ackno s)                     ; peer ISN+1
+    (flet ((send-syn-ack ()
+             (send-packet client +tcp-protocol+ key
+                          (%make-ipv4-tcp-packet (%src-ip s) (%src-port s)
+                                                 (%dst-ip s) (%dst-port s)
+                                                 :syn 1
+                                                 :ack 1
+                                                 :seqno (%seqno s)
+                                                 :ackno (%ackno s)))))
+      (send-syn-ack)
+      ;; expose the stream now, so that a final ACK piggybacking the first
+      ;; data segment (a single ACK+PSH packet) is not lost.
+      (setf (%stream s) (make-instance '%socket-stream :socket s))
+      ;; wait for the peer's final ACK (may already carry data). A peer
+      ;; that didn't see our SYN-ACK retransmits its SYN; resend the
+      ;; SYN-ACK and keep waiting rather than failing the handshake.
+      (let ((stream (socket-stream s)))
+        (loop
+          (destructuring-bind (tcp-header rest-stream size)
+              (receive-packet client +tcp-protocol+ key)
+            (cond
+              ((and (= 1 (tcp-header-syn tcp-header))
+                    (= 0 (tcp-header-ack tcp-header)))
+               (send-syn-ack))          ; retransmitted SYN: resend SYN-ACK
+              ((= 1 (tcp-header-ack tcp-header))
+               (assert (= (mod (1+ (%seqno s)) +max-32-bytes+)
+                          (tcp-header-ackno tcp-header)))
+               ;; our SYN-ACK consumed one sequence number.
+               (%next-seqno s)
+               (let ((fin (= 1 (tcp-header-fin tcp-header))))
+                 (when (> size 0)
+                   (let ((buffer (make-array size :element-type 'octet)))
+                     (read-sequence buffer rest-stream)
+                     (%next-ackno s (+ size (if fin 1 0)))
+                     (%send-ack s)
+                     (%stash-read stream buffer)))
+                 (when (and fin (zerop size))
+                   (%next-ackno s 1)
+                   (%send-ack s)
+                   (setf (%eof s) t)))
+               (return)))))))))
 
 (defun socket-connect (client &key (protocol :stream) host port)
   (declare (ignore protocol))
@@ -391,8 +404,12 @@ SERVER-SOCKET whose SOCKET-ACCEPT yields established connections."
 (defmethod socket-accept ((s server-socket))
   "Block until a peer opens a connection to the listening port, complete
 the passive open, and return the established CLIENT-SOCKET."
-  (destructuring-bind (local-ip local-port peer-ip peer-port)
-      (lp.q:pop-queue (%queue s))
+  (%accept-descriptor s (lp.q:pop-queue (%queue s))))
+
+(defun %accept-descriptor (s descriptor)
+  "Complete the passive open for one inbound connection DESCRIPTOR (as
+pushed by the reader) and return the established CLIENT-SOCKET."
+  (destructuring-bind (local-ip local-port peer-ip peer-port) descriptor
     (make-instance 'client-socket
                    :client (client s)
                    :protocol :stream
@@ -444,24 +461,36 @@ an EXPOSURE handle; stop it with UNEXPOSE."
 (defun %accept-loop (exposure)
   (lambda ()
     (loop
-      (let ((vpn-socket (socket-accept (%server-socket exposure))))
-        ;; one thread per accepted connection; the relay inside is itself
-        ;; single-threaded.
+      ;; Only dequeue here; the per-connection thread completes the passive
+      ;; open *and* relays. That way several handshakes proceed in parallel
+      ;; (each connection has its own packet queue, so this is safe) and a
+      ;; failed handshake can't stall or kill the accept loop.
+      (let ((descriptor (lp.q:pop-queue (%queue (%server-socket exposure)))))
         (bt:make-thread
-         (lambda () (%handle-exposed-connection exposure vpn-socket))
+         (lambda () (%handle-exposed-connection exposure descriptor))
          :name "expose connection")))))
 
-(defun %handle-exposed-connection (exposure vpn-socket)
-  (handler-case
-      (let ((os-socket (u:socket-connect (host exposure) (port exposure)
-                                         :protocol :stream
-                                         :element-type 'octet)))
-        (unwind-protect
-             (%relay vpn-socket os-socket)
-          (ignore-errors (u:socket-close os-socket))))
-    (error (c)
-      (format t "error handling exposed connection: ~a~%" c)))
-  (ignore-errors (socket-close vpn-socket)))
+(defun %handle-exposed-connection (exposure descriptor)
+  ;; the per-connection queue's key is exactly the descriptor
+  ;; (local-ip local-port peer-ip peer-port), see %READER-CALLBACK.
+  (let ((vpn-socket
+          (handler-case (%accept-descriptor (%server-socket exposure) descriptor)
+            (error (c)
+              (format t "expose: passive open failed: ~a~%" c)
+              (remove-connection (client exposure) +tcp-protocol+ descriptor)
+              nil))))
+    (when vpn-socket
+      (handler-case
+          (unwind-protect
+               (let ((os-socket (u:socket-connect (host exposure) (port exposure)
+                                                  :protocol :stream
+                                                  :element-type 'octet)))
+                 (unwind-protect
+                      (%relay vpn-socket os-socket)
+                   (ignore-errors (u:socket-close os-socket))))
+            (ignore-errors (socket-close vpn-socket)))
+        (error (c)
+          (format t "error handling exposed connection: ~a~%" c))))))
 
 (defun %relay (vpn-socket os-socket)
   "Pump bytes both ways between an established VPN socket and a local OS

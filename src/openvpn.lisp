@@ -239,13 +239,18 @@
       (%reader-callback c buffer size))))
 
 (defun %read-until (stream buffer size)
+  "Fill BUFFER[0,SIZE) from STREAM, looping over partial reads.
+READ-SEQUENCE returns the index of the first byte it did not fill, so we
+just resume from there until we reach SIZE. Signals END-OF-FILE if the
+stream closes before SIZE bytes have arrived (no progress)."
   (let ((offset 0))
     (loop
-      (let ((count (read-sequence buffer stream :start offset)))
-        (when (= count size)
+      (let ((new-offset (read-sequence buffer stream :start offset :end size)))
+        (when (>= new-offset size)
           (return-from %read-until))
-        (setf size (- size count))
-        (setf offset (+ offset (1- count)))))))
+        (when (= new-offset offset)     ; no progress => stream closed
+          (error 'end-of-file :stream stream))
+        (setf offset new-offset)))))
 
 (defun %reader-callback (c buffer size)
   (multiple-value-bind (type packet-header rest-stream)
@@ -272,59 +277,55 @@
                            (dst-ip (ipv4-header-dst-ip packet-header))
                            (dst-port (tcp-header-dst-port tcp-header))
                            (key (list dst-ip dst-port src-ip src-port)))
-                      (let ((queue))
+                      (let ((queue)
+                            (listener-queue)
+                            (payload-size (- (ipv4-header-total-length packet-header)
+                                             20 tcp-header-length)))
+                        ;; Look up the connection and, for a fresh inbound
+                        ;; SYN, the listener -- and create the per-connection
+                        ;; queue -- all under one lock, inside the single
+                        ;; reader thread, so the follow-up ACK/data cannot
+                        ;; race ahead of the accept and get reset.
                         (bt:with-lock-held ((%connections-lock c))
-                          (setf queue (gethash key (gethash protocol (%connections c)))))
-
-                        (when (= 1 (tcp-header-rst tcp-header))
-                          (return-from %reader-callback
-                            (lp.q:push-queue (make-condition 'econnreset) queue)))
-
-                        (unless queue
-                          ;; A pure SYN to a port we are listening on is a
-                          ;; peer opening a connection to us (a passive
-                          ;; open). Hand it to the listener rather than
-                          ;; resetting. We create the per-connection queue
-                          ;; here, inside the single reader thread, so the
-                          ;; follow-up ACK/data cannot race ahead of the
-                          ;; accept and get reset.
-                          (let ((listener-queue
-                                  (and (= 1 (tcp-header-syn tcp-header))
-                                       (= 0 (tcp-header-ack tcp-header))
-                                       (bt:with-lock-held ((%connections-lock c))
-                                         (gethash dst-port (%listeners c))))))
+                          (setf queue (gethash key (gethash protocol (%connections c))))
+                          (when (and (null queue)
+                                     (= 1 (tcp-header-syn tcp-header))
+                                     (= 0 (tcp-header-ack tcp-header)))
+                            (setf listener-queue (gethash dst-port (%listeners c)))
                             (when listener-queue
-                              (let ((conn-queue (lp.q:make-queue)))
-                                (bt:with-lock-held ((%connections-lock c))
-                                  (setf (gethash key (gethash protocol (%connections c)))
-                                        conn-queue))
-                                (lp.q:push-queue
-                                 (list tcp-header rest-stream
-                                       (- (ipv4-header-total-length packet-header)
-                                          20 tcp-header-length))
-                                 conn-queue)
-                                (lp.q:push-queue (list dst-ip dst-port src-ip src-port)
-                                                 listener-queue))
-                              (return-from %reader-callback)))
-
+                              (setf queue (lp.q:make-queue))
+                              (setf (gethash key (gethash protocol (%connections c))) queue))))
+                        (cond
+                          ;; a peer is opening a connection to a port we
+                          ;; listen on (passive open): queue the SYN and hand
+                          ;; the connection to the listener to accept.
+                          (listener-queue
+                           (lp.q:push-queue (list tcp-header rest-stream payload-size) queue)
+                           (lp.q:push-queue (list dst-ip dst-port src-ip src-port)
+                                            listener-queue))
+                          ;; a known connection: deliver a reset as a
+                          ;; condition, otherwise relay the segment.
+                          (queue
+                           (if (= 1 (tcp-header-rst tcp-header))
+                               (lp.q:push-queue (make-condition 'econnreset) queue)
+                               (lp.q:push-queue (list tcp-header rest-stream payload-size)
+                                                queue)))
+                          ;; a stray RST for a connection that is already
+                          ;; gone: nothing to do.
+                          ((= 1 (tcp-header-rst tcp-header)) nil)
                           ;; nothing is listening on this 4-tuple (e.g. a
                           ;; packet arriving after we tore the connection
                           ;; down): reset the peer. The RST's sequence number
                           ;; must be the ack number of the packet we're
                           ;; replying to, otherwise the peer ignores it as
                           ;; out of window.
-                          (return-from %reader-callback
-                            (send-packet c +tcp-protocol+ key
-                                          (%make-ipv4-tcp-packet dst-ip dst-port
-                                                                 src-ip src-port
-                                                                 :rst 1
-                                                                 :seqno (tcp-header-ackno tcp-header))
-                                          :skip-connection t)))
-
-                        (lp.q:push-queue
-                         (list tcp-header rest-stream (- (ipv4-header-total-length packet-header)
-                                                         20 tcp-header-length))
-                         queue))))))))))
+                          (t
+                           (send-packet c +tcp-protocol+ key
+                                        (%make-ipv4-tcp-packet dst-ip dst-port
+                                                               src-ip src-port
+                                                               :rst 1
+                                                               :seqno (tcp-header-ackno tcp-header))
+                                        :skip-connection t))))))))))))
 
 (defmethod receive-packet ((c openvpn-client-static-key) protocol key)
   (let ((queue))
