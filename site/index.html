@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>erebus — a rootless, user-space VPN proxy</title>
+    <meta name="description" content="erebus is an experimental VPN client that runs entirely in user space: no root, no kernel tunnels, no global routing. It exposes VPN access through a local HTTP proxy and can expose local services back to the VPN.">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 128 128%22><text y=%221.1em%22 font-size=%2296%22>🕳️</text></svg>">
+    <style>
+        :root {
+            --bg: #f6f6f9;
+            --surface: #ffffff;
+            --accent: #4361ee;
+            --accent-hover: #3a56d4;
+            --text: #1a1a2e;
+            --text-muted: #4e4e66;
+            --text-secondary: #374151;
+            --border: #e0e0e8;
+            --border-light: #f0f0f4;
+            --glow: rgba(67,97,238,.06);
+            --code-bg: #f0f0f4;
+            --good: #166534;
+            --good-bg: #f0fdf4;
+            --good-border: #bbf7d0;
+            --bad: #991b1b;
+            --bad-bg: #fef2f2;
+            --bad-border: #fecaca;
+            --hero-grad: radial-gradient(1200px 400px at 50% -10%, rgba(67,97,238,.10), transparent);
+        }
+
+        @media(prefers-color-scheme:dark) {
+            :root:not([data-theme="light"]) {
+                --bg: #0f0f1a;
+                --surface: #1a1a2e;
+                --accent: #6c84f7;
+                --accent-hover: #8da0ff;
+                --text: #e0e0e0;
+                --text-muted: #9a9ab0;
+                --text-secondary: #c0c0d0;
+                --border: #2a2a3e;
+                --border-light: #222236;
+                --glow: rgba(108,132,247,.08);
+                --code-bg: #12121f;
+                --good: #6ee7b7;
+                --good-bg: #1a2a1a;
+                --good-border: #1e4030;
+                --bad: #fca5a5;
+                --bad-bg: #2a1a1a;
+                --bad-border: #5c2020;
+                --hero-grad: radial-gradient(1200px 400px at 50% -10%, rgba(108,132,247,.14), transparent);
+            }
+        }
+
+        :root[data-theme="dark"] {
+            --bg: #0f0f1a;
+            --surface: #1a1a2e;
+            --accent: #6c84f7;
+            --accent-hover: #8da0ff;
+            --text: #e0e0e0;
+            --text-muted: #9a9ab0;
+            --text-secondary: #c0c0d0;
+            --border: #2a2a3e;
+            --border-light: #222236;
+            --glow: rgba(108,132,247,.08);
+            --code-bg: #12121f;
+            --good: #6ee7b7;
+            --good-bg: #1a2a1a;
+            --good-border: #1e4030;
+            --bad: #fca5a5;
+            --bad-bg: #2a1a1a;
+            --bad-border: #5c2020;
+            --hero-grad: radial-gradient(1200px 400px at 50% -10%, rgba(108,132,247,.14), transparent);
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+        a { color: var(--accent); }
+        a:hover { color: var(--accent-hover); }
+
+        /* Navbar */
+        .navbar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 0 1.5rem;
+            height: 56px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .navbar a { color: var(--text-muted); text-decoration: none; font-size: 0.875rem; font-weight: 500; transition: color 0.15s; }
+        .navbar a:hover { color: var(--text); }
+        .navbar .brand { color: var(--text); font-weight: 700; font-size: 1.125rem; letter-spacing: -0.025em; }
+        .navbar .nav-links { display: flex; gap: 1.25rem; align-items: center; }
+        @media (max-width: 560px) { .navbar .nav-links a.optional { display: none; } }
+
+        .container { max-width: 880px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+        /* Hero */
+        .hero { background: var(--hero-grad); text-align: center; padding: 4rem 1.5rem 2.5rem; }
+        .hero h1 { font-size: 2.75rem; font-weight: 800; letter-spacing: -0.04em; color: var(--text); }
+        .hero .tagline { font-size: 1.25rem; color: var(--text-secondary); max-width: 40rem; margin: 1rem auto 0; }
+        .hero .sub { font-size: 0.95rem; color: var(--text-muted); max-width: 38rem; margin: 0.75rem auto 0; }
+        .hero .pills { display: flex; gap: 0.5rem; justify-content: center; flex-wrap: wrap; margin-top: 1.5rem; }
+        .pill { font-size: 0.8rem; font-weight: 600; padding: 0.3rem 0.75rem; border-radius: 9999px; background: var(--surface); border: 1px solid var(--border); color: var(--text-muted); }
+        .cta { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; margin-top: 1.75rem; }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.6rem 1.2rem;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.15s;
+        }
+        .btn-primary { background: var(--accent); color: #fff; }
+        .btn-primary:hover { background: var(--accent-hover); color: #fff; box-shadow: 0 2px 12px var(--glow); }
+        .btn-secondary { background: var(--surface); color: var(--text-secondary); border: 1px solid var(--border); }
+        .btn-secondary:hover { border-color: var(--accent); color: var(--text); }
+
+        /* Sections */
+        section { padding: 2.25rem 0; border-top: 1px solid var(--border-light); }
+        section:first-of-type { border-top: none; }
+        h2 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0.5rem; }
+        h2 .eyebrow { display: block; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 0.4rem; }
+        h3 { font-size: 1.05rem; font-weight: 600; margin: 0 0 0.4rem; }
+        p { color: var(--text-secondary); margin-bottom: 0.75rem; }
+        .lead { font-size: 1.05rem; }
+
+        /* Cards */
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.4rem; }
+        .grid { display: grid; gap: 1rem; }
+        .grid-2 { grid-template-columns: 1fr 1fr; }
+        @media (max-width: 640px) { .grid-2 { grid-template-columns: 1fr; } }
+
+        ul.clean { list-style: none; }
+        ul.clean li { padding-left: 1.5rem; position: relative; margin-bottom: 0.5rem; color: var(--text-secondary); }
+        ul.clean li::before { content: ''; position: absolute; left: 0.25rem; top: 0.65rem; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+        .check li::before, .cross li::before { content: none; }
+        .check li, .cross li { padding-left: 1.6rem; }
+        .check li::after, .cross li::after { position: absolute; left: 0; top: 0; font-weight: 700; }
+        .check li { position: relative; }
+        .check li::after { content: '✓'; color: var(--good); }
+        .cross li { position: relative; }
+        .cross li::after { content: '✗'; color: var(--bad); }
+
+        /* Code */
+        code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; background: var(--code-bg); padding: 0.1rem 0.35rem; border-radius: 4px; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.1rem; overflow-x: auto; margin-bottom: 0.75rem; }
+        pre code { background: none; padding: 0; font-size: 0.82rem; line-height: 1.55; color: var(--text); }
+        .diagram { text-align: center; }
+        .diagram pre { display: inline-block; text-align: left; color: var(--text-muted); }
+
+        /* FAQ */
+        details { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 0.9rem 1.1rem; margin-bottom: 0.6rem; }
+        details[open] { border-color: var(--accent); }
+        summary { cursor: pointer; font-weight: 600; color: var(--text); list-style: none; }
+        summary::-webkit-details-marker { display: none; }
+        summary::before { content: '+'; color: var(--accent); font-weight: 700; margin-right: 0.6rem; display: inline-block; width: 1ch; }
+        details[open] summary::before { content: '–'; }
+        details p { margin: 0.7rem 0 0; }
+
+        /* Footer */
+        footer { border-top: 1px solid var(--border); padding: 2rem 1.5rem; text-align: center; color: var(--text-muted); font-size: 0.85rem; }
+        footer a { color: var(--text-muted); }
+
+        .note { font-size: 0.85rem; color: var(--text-muted); }
+
+        /* Theme toggle (from the project's own design system) */
+        .theme-toggle {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            width: 40px; height: 22px;
+            cursor: pointer; padding: 2px;
+            transition: all 0.3s ease;
+            display: flex; align-items: center; flex-shrink: 0;
+        }
+        .theme-toggle:hover { border-color: var(--accent); }
+        .theme-toggle .knob {
+            width: 16px; height: 16px; border-radius: 50%;
+            background: var(--accent); transition: transform 0.3s ease;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .theme-toggle .knob svg { width: 10px; height: 10px; color: var(--surface); }
+        .theme-toggle[aria-checked="true"] .knob { transform: translateX(18px); }
+
+        :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        @media(prefers-reduced-motion:reduce) { *, *::before, *::after { transition: none !important; } }
+    </style>
+    <script>
+    (function(){
+        var root=document.documentElement;
+        var stored=localStorage.getItem('theme');
+        var prefersDark=window.matchMedia('(prefers-color-scheme:dark)').matches;
+        if(stored==='dark'||((!stored)&&prefersDark)){root.setAttribute('data-theme','dark')}
+        else{root.setAttribute('data-theme','light')}
+    })();
+    </script>
+</head>
+<body>
+    <nav class="navbar">
+        <a href="#top" class="brand">erebus</a>
+        <div class="nav-links">
+            <a href="#how" class="optional">How it works</a>
+            <a href="#use" class="optional">Use cases</a>
+            <a href="#faq">FAQ</a>
+            <a href="https://github.com/ralt/erebus">GitHub</a>
+            <button class="theme-toggle" role="switch" aria-checked="false" aria-label="Toggle dark mode">
+                <span class="knob">
+                    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                </span>
+            </button>
+        </div>
+    </nav>
+
+    <header class="hero" id="top">
+        <h1>erebus</h1>
+        <p class="tagline">A VPN client that runs entirely in user space — no root, no kernel tunnels, no global routing.</p>
+        <p class="sub">erebus speaks OpenVPN itself, builds its own IP packets, runs its own minimal TCP/IP stack, and hands you VPN access through an ordinary local HTTP proxy. It's a VPN <em>agent</em>, not a system-wide VPN.</p>
+        <div class="pills">
+            <span class="pill">Rootless</span>
+            <span class="pill">No TUN/TAP</span>
+            <span class="pill">OpenVPN static-key</span>
+            <span class="pill">UDP &amp; TCP</span>
+            <span class="pill">Inbound &amp; outbound</span>
+        </div>
+        <div class="cta">
+            <a class="btn btn-primary" href="#quick">Quick start</a>
+            <a class="btn btn-secondary" href="https://github.com/ralt/erebus">View on GitHub</a>
+        </div>
+    </header>
+
+    <div class="container">
+
+        <section id="what">
+            <h2><span class="eyebrow">The pitch</span>What is erebus?</h2>
+            <p class="lead">Traditional VPN clients assume they own the machine: they create a kernel <code>tun</code>/<code>tap</code> interface, rewrite your routing table, and need root to do it. That model breaks in containers, CI runners, sandboxes, and other locked-down hosts.</p>
+            <p>erebus takes the opposite approach. It does all the VPN work — the OpenVPN protocol, IP packets, TCP state, encryption — inside a single user-space process. Nothing about the host's networking is touched. Connectivity is explicit and opt-in: you point a client at a local proxy, and only that traffic crosses the VPN.</p>
+            <div class="grid grid-2" style="margin-top:1rem;">
+                <div class="card">
+                    <h3>Outbound</h3>
+                    <p style="margin:0;">A local HTTP/1.x proxy forwards requests from local clients to resources living on the VPN.</p>
+                </div>
+                <div class="card">
+                    <h3>Inbound</h3>
+                    <p style="margin:0;">Port forwards expose a chosen local service back to VPN peers — bidirectional, still rootless.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="quick">
+            <h2><span class="eyebrow">Quick start</span>Five lines of config</h2>
+            <p>erebus is driven by a single INI file. A minimal outbound proxy over UDP:</p>
+            <pre><code>[erebus]
+client-ip = 10.8.0.2
+
+[openvpn-server]
+proto  = udp
+host   = vpn.example.com
+port   = 1194
+secret = /etc/erebus/static.key
+cipher = AES-256-CBC
+auth   = SHA256
+
+[proxy-out]
+address = 127.0.0.1
+port    = 11023</code></pre>
+            <p>Run it, then use it like any other HTTP proxy:</p>
+            <pre><code>$ erebus --config erebus.ini &amp;
+$ http_proxy=http://127.0.0.1:11023 curl http://10.8.0.1/</code></pre>
+            <p>Want to expose a local service to the VPN too? Add a forward — a peer reaches your <code>127.0.0.1:8080</code> at <code>10.8.0.2:8080</code> over the tunnel:</p>
+            <pre><code>[proxy-in]
+web = 8080 127.0.0.1:8080</code></pre>
+            <p class="note">Full reference: the <a href="https://github.com/ralt/erebus/blob/main/doc/erebus.1">erebus(1) man page</a> (<code>make man</code>) and the annotated <a href="https://github.com/ralt/erebus/blob/main/default-config.ini"><code>default-config.ini</code></a>.</p>
+        </section>
+
+        <section id="how">
+            <h2><span class="eyebrow">How it works</span>Everything in user space</h2>
+            <p>A conventional VPN leans on the kernel for routing and TCP. erebus replaces that whole column with its own code, so the only privilege it needs is the ability to open a socket.</p>
+            <div class="diagram">
+<pre><code>local HTTP client            VPN peer
+       │                        │
+       ▼                        ▼
+  HTTP proxy            accept &amp; relay        ← outbound / inbound
+       │                        │
+       ▼                        ▼
+   user-space TCP/IP stack  ◄───┘             ← keeps connections reliable
+       │
+       ▼
+   IPv4 / TCP / ICMP packets                  ← built &amp; parsed by hand
+       │
+       ▼
+   OpenVPN encrypt + HMAC + packet-id         ← static-key (wire format v1)
+       │
+       ▼
+   UDP datagram  /  TCP frame                 ← transport-agnostic
+       │
+       ▼
+   OpenVPN server</code></pre>
+            </div>
+            <p>The same minimal TCP stack serves both directions; outbound and inbound differ only in who opens the connection. The transport layer is genuinely abstract — UDP and TCP share all protocol logic.</p>
+            <p class="note">Deeper dive, with the design rationale and the trade-offs behind it: <a href="https://github.com/ralt/erebus/blob/main/doc/architecture.md">doc/architecture.md</a>.</p>
+        </section>
+
+        <section id="use">
+            <h2><span class="eyebrow">Honest positioning</span>When to reach for it — and when not to</h2>
+            <div class="grid grid-2">
+                <div class="card">
+                    <h3 style="color:var(--good);">Where it shines</h3>
+                    <ul class="clean check">
+                        <li>Reaching an internal HTTP service from inside an unprivileged container</li>
+                        <li>CI jobs that need a private VPN endpoint without <code>NET_ADMIN</code></li>
+                        <li>Sandboxed or multi-tenant hosts where editing global routes is off-limits</li>
+                        <li>Exposing one local port to a VPN peer, opt-in</li>
+                        <li>Quick back-and-forth requests where the responses aren't huge</li>
+                        <li>Reading actual, legible code to understand how OpenVPN works</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <h3 style="color:var(--bad);">Where it's the wrong tool</h3>
+                    <ul class="clean cross">
+                        <li>A system-wide VPN that routes <em>all</em> host traffic</li>
+                        <li>Moving large amounts of data fast — it's built for small, snappy requests, not bulk transfer</li>
+                        <li>TLS-mode OpenVPN, certificates, or pushed config — not yet</li>
+                        <li>A drop-in replacement for the full OpenVPN client</li>
+                        <li>HTTPS <code>CONNECT</code> tunnelling or SOCKS — explicit HTTP/1.x only</li>
+                        <li>Anything needing a complete, tuned TCP/IP stack</li>
+                    </ul>
+                </div>
+            </div>
+            <p class="note" style="margin-top:1rem;">These aren't oversights — they're the other side of the rootless coin. Correctness, interoperability and clarity come first; performance is explicitly deferred. See the <a href="https://github.com/ralt/erebus/blob/main/doc/stress-results.md">measured performance</a>.</p>
+        </section>
+
+        <section id="faq">
+            <h2><span class="eyebrow">FAQ</span>Questions you probably have</h2>
+
+            <details>
+                <summary>Does it really not need root?</summary>
+                <p>Correct. erebus never creates a network interface, never edits a routing table, and needs no capabilities beyond opening an ordinary client socket. All VPN logic — protocol, IP packets, TCP state, crypto — lives in one user-space process.</p>
+            </details>
+
+            <details>
+                <summary>Which OpenVPN modes are supported?</summary>
+                <p>Static-key mode only (pre-shared key, also called wire format v1), over UDP or TCP. CBC ciphers — AES, ARIA and Camellia at 128/192/256 — and a wide range of HMAC digests. The <code>cipher</code> and <code>auth</code> values must match the server. TLS mode, certificates and the control channel are planned but not yet implemented.</p>
+            </details>
+
+            <details>
+                <summary>Why is it a proxy instead of a normal VPN connection?</summary>
+                <p>Because there's no kernel interface to route into. Without a <code>tun</code> device, the way to hand VPN connectivity to a local app is through an explicit endpoint — a local HTTP proxy for outbound, port forwards for inbound. That explicitness is a feature: only the traffic you point at erebus crosses the VPN.</p>
+            </details>
+
+            <details>
+                <summary>How fast is it?</summary>
+                <p>Fast enough for what it's built for — quick, small requests — and deliberately not tuned for moving large amounts of data. To keep the code simple, it sends data one piece at a time and waits for each piece to be confirmed before sending the next, so big downloads run several times slower than a normal proxy. Numbers and methodology are in <a href="https://github.com/ralt/erebus/blob/main/doc/stress-results.md">stress-results.md</a>.</p>
+            </details>
+
+            <details>
+                <summary>Can it proxy HTTPS?</summary>
+                <p>Not yet. The outbound proxy speaks plain HTTP/1.x; there's no HTTPS <code>CONNECT</code> tunnelling, SOCKS, or TLS-to-backend. Those are future work.</p>
+            </details>
+
+            <details>
+                <summary>What's it written in?</summary>
+                <p>Common Lisp (SBCL). The codebase is intentionally small and readable — implementing the protocols incrementally in user-space code is part of the point.</p>
+            </details>
+
+            <details>
+                <summary>Is it production-ready?</summary>
+                <p>No — it's an early-stage, experimental project. It prioritizes correctness and clarity over completeness, and the roadmap is explicit about what's deferred. Treat it as a capable tool for specific constrained-environment use cases, not a hardened VPN client.</p>
+            </details>
+        </section>
+
+        <section id="learn">
+            <h2><span class="eyebrow">Go deeper</span>Documentation</h2>
+            <ul class="clean">
+                <li><a href="https://github.com/ralt/erebus/blob/main/README.md">README</a> — project overview and current status</li>
+                <li><a href="https://github.com/ralt/erebus/blob/main/doc/erebus.1">erebus(1)</a> — the man page: options, full config reference, limitations</li>
+                <li><a href="https://github.com/ralt/erebus/blob/main/doc/architecture.md">Architecture &amp; trade-offs</a> — why user-space, and what it costs</li>
+                <li><a href="https://github.com/ralt/erebus/blob/main/doc/openvpn-static-key-protocol-version-1.md">OpenVPN static-key wire format</a> — the protocol, independent of this implementation</li>
+                <li><a href="https://github.com/ralt/erebus/blob/main/doc/stress-results.md">Performance results</a> — measured cost and how to reproduce it</li>
+                <li><a href="https://github.com/ralt/erebus/blob/main/ROADMAP.md">Roadmap</a> — the incremental plan</li>
+            </ul>
+        </section>
+
+    </div>
+
+    <footer>
+        <p>erebus — rootless, user-space VPN proxy. Licensed GPLv3.</p>
+        <p><a href="https://github.com/ralt/erebus">github.com/ralt/erebus</a></p>
+    </footer>
+
+    <script>
+    (function(){
+        var toggle=document.querySelector('.theme-toggle');
+        if(!toggle)return;
+        var root=document.documentElement;
+        var sun=toggle.querySelector('.icon-sun');
+        var moon=toggle.querySelector('.icon-moon');
+        var stored=localStorage.getItem('theme');
+        var prefersDark=window.matchMedia('(prefers-color-scheme:dark)').matches;
+        var dark=stored?stored==='dark':prefersDark;
+
+        function apply(d){
+            dark=d;
+            root.setAttribute('data-theme',d?'dark':'light');
+            toggle.setAttribute('aria-checked',String(d));
+            sun.style.display=d?'none':'block';
+            moon.style.display=d?'block':'none';
+        }
+        apply(dark);
+
+        toggle.addEventListener('click',function(){
+            apply(!dark);
+            localStorage.setItem('theme',dark?'dark':'light');
+        });
+        window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change',function(e){
+            if(!localStorage.getItem('theme')){apply(e.matches)}
+        });
+    })();
+    </script>
+</body>
+</html>

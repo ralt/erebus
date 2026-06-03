@@ -169,7 +169,7 @@ Notes:
 * Basic access controls (per-port source allow-lists) are intentionally
   deferred; exposure being opt-in via config is the only control for now.
 
-## Phase 7 — Documentation, positioning, and user-facing clarity
+## ✅ Phase 7 — Documentation, positioning, and user-facing clarity
 
 Goal: clearly explain what this project **is**, **is not**, and **why it exists**, making it approachable for users while being honest about trade-offs and limitations.
 
@@ -213,6 +213,20 @@ Outcome:
 * Clear expectations for users and contributors
 * Reduced support and onboarding friction
 * A solid foundation for adoption and feedback
+
+Notes:
+
+* Deliverables landed:
+  * `doc/erebus.1` — a Unix man page (read it with `make man`) covering
+    options, the full configuration reference (sections, ciphers, digests),
+    examples, files, and an honest limitations section.
+  * `doc/architecture.md` — the user-space-vs-kernel rationale, the embedded
+    TCP/IP stack's design and what it gives up, and the performance vs
+    portability vs safety trade-off, with a data-flow diagram.
+  * `site/index.html` — a small, self-contained project website (no build
+    step): elevator pitch, how it works, use cases (where it shines / where
+    it's the wrong tool), and an FAQ.
+* No new protocol features, by design.
 
 ## Phase 8 — OpenVPN TLS support (UDP and TCP)
 

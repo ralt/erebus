@@ -27,4 +27,8 @@ stress:
 stress-inbound:
 	$(LISP) --script t/stress-inbound.lisp
 
-.PHONY: test verify stress stress-inbound
+# Read the man page formatted, straight from the source tree.
+man:
+	man ./doc/erebus.1
+
+.PHONY: test verify stress stress-inbound man

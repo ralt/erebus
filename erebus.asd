@@ -1,6 +1,6 @@
 (defsystem erebus
   :serial t
-  :license "GPLv2"
+  :license "GPLv3"
   :author "Florian Margaine <florian@margaine.com>"
   :description "Rootless VPN userspace proxy"
   :depends-on (:usocket
