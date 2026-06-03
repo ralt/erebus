@@ -1,6 +1,6 @@
 (in-package #:erebus)
 
-(defclass openvpn-client-static-key ()
+(defclass openvpn-client-static-key (vpn-data-plane)
   ((protocol :initarg :protocol :reader protocol :initform :datagram)
    (host :initarg :host :reader host)
    (port :initarg :port :reader port)
@@ -9,16 +9,7 @@
    (auth :initarg :auth :reader auth)
    (secret :initarg :secret :reader secret)
    (key-direction :initarg :key-direction :reader key-direction :initform nil)
-   (%vpn-connection :accessor %vpn-connection)
    (%packet-id-counter :accessor %packet-id-counter :initform 0)
-   (%connections :accessor %connections)
-   (%connections-lock :accessor %connections-lock)
-   ;; ports we accept inbound connections on: dst-port -> accept queue.
-   ;; guarded by %connections-lock.
-   (%listeners :accessor %listeners)
-   ;; running EXPOSURE handles, so DISCONNECT can tear them down.
-   (%exposures :accessor %exposures :initform nil)
-   (%client-ip-address :accessor %client-ip-address)
    (%cipher-type :accessor %cipher-type)
    (%cipher-mode :accessor %cipher-mode)
    (%cipher-encrypt-key :accessor %cipher-encrypt-key)
@@ -80,14 +71,6 @@
 
 (defmethod initialize-instance :after ((c openvpn-client-static-key) &key)
   (setf (%client-ip-address c) (string-ipv4-address-to-integer (client-ip c)))
-  (setf (%connections c) (make-hash-table))
-  ;; Initialize an empty hash table of connections for each protocol
-  ;; we support so that we don't have to try doing that every time we
-  ;; make a new connection
-  (dolist (protocol (list +icmp-protocol+ +tcp-protocol+))
-    (setf (gethash protocol (%connections c)) (make-hash-table :test #'equal)))
-  (setf (%listeners c) (make-hash-table))
-  (setf (%connections-lock c) (bt:make-lock))
   (setf (%vpn-connection c)
         (make-instance 'vpn-connection
                        :protocol (protocol c)
@@ -160,22 +143,6 @@
   (bt:destroy-thread (%ping-thread c))
   (disconnect (%vpn-connection c)))
 
-(defmethod register-listener ((c openvpn-client-static-key) port queue)
-  (bt:with-lock-held ((%connections-lock c))
-    (setf (gethash port (%listeners c)) queue)))
-
-(defmethod unregister-listener ((c openvpn-client-static-key) port)
-  (bt:with-lock-held ((%connections-lock c))
-    (remhash port (%listeners c))))
-
-(defmethod register-exposure ((c openvpn-client-static-key) exposure)
-  (bt:with-lock-held ((%connections-lock c))
-    (push exposure (%exposures c))))
-
-(defmethod unregister-exposure ((c openvpn-client-static-key) exposure)
-  (bt:with-lock-held ((%connections-lock c))
-    (setf (%exposures c) (remove exposure (%exposures c)))))
-
 (bin:defbinary %ping-packet (:byte-order :big-endian)
   (magic #x2a187bf3641eb4cb07ed2d0a981fc748
          :type (bin:magic :actual-type (unsigned-byte 128)
@@ -203,12 +170,7 @@
   (let ((serialized-packet (%serialize-packet c packet)))
     (when (and (not skip-connection) protocol)
       (bt:with-lock-held ((%connections-lock c))
-        ;; Create the connection queue lazily and *keep it for the
-        ;; lifetime of the connection*. Recreating it on every send
-        ;; would drop inbound packets that arrived between two of our
-        ;; sends, which breaks multi-segment (fragmented) reads.
-        (unless (gethash key (gethash protocol (%connections c)))
-          (setf (gethash key (gethash protocol (%connections c))) (lp.q:make-queue)))))
+        (%ensure-connection-queue c protocol key)))
     (send (%vpn-connection c)
           (cond ((eq (protocol c) :stream)
                  (concatenate 'octet-vector (fs:with-output-to-sequence (s)
@@ -255,123 +217,7 @@ stream closes before SIZE bytes have arrived (no progress)."
 (defun %reader-callback (c buffer size)
   (multiple-value-bind (type packet-header rest-stream)
       (%deserialize-packet c buffer size)
-    (cond ((eq type :ip)
-           (let ((protocol (ipv4-header-protocol packet-header)))
-             (cond ((= protocol +icmp-protocol+)
-                    (let* ((icmp-packet (bin:read-binary 'icmp-packet rest-stream))
-                           (key (icmp-packet-identifier icmp-packet)))
-                      (bt:with-lock-held ((%connections-lock c))
-                        (let ((queue (gethash key (gethash protocol (%connections c)))))
-                          (remhash key (gethash protocol (%connections c)))
-                          (lp.q:push-queue nil queue)))))
-
-                   ((= protocol +tcp-protocol+)
-                    ;; TODO: handle FIN
-                    (let* ((tcp-header (bin:read-binary 'tcp-header rest-stream))
-                           (tcp-header-length
-                             (length
-                              (fs:with-output-to-sequence (s)
-                                (bin:write-binary tcp-header s))))
-                           (src-ip (ipv4-header-src-ip packet-header))
-                           (src-port (tcp-header-src-port tcp-header))
-                           (dst-ip (ipv4-header-dst-ip packet-header))
-                           (dst-port (tcp-header-dst-port tcp-header))
-                           (key (list dst-ip dst-port src-ip src-port)))
-                      (let ((queue)
-                            (listener-queue)
-                            (payload-size (- (ipv4-header-total-length packet-header)
-                                             20 tcp-header-length)))
-                        ;; Look up the connection and, for a fresh inbound
-                        ;; SYN, the listener -- and create the per-connection
-                        ;; queue -- all under one lock, inside the single
-                        ;; reader thread, so the follow-up ACK/data cannot
-                        ;; race ahead of the accept and get reset.
-                        (bt:with-lock-held ((%connections-lock c))
-                          (setf queue (gethash key (gethash protocol (%connections c))))
-                          (when (and (null queue)
-                                     (= 1 (tcp-header-syn tcp-header))
-                                     (= 0 (tcp-header-ack tcp-header)))
-                            (setf listener-queue (gethash dst-port (%listeners c)))
-                            (when listener-queue
-                              (setf queue (lp.q:make-queue))
-                              (setf (gethash key (gethash protocol (%connections c))) queue))))
-                        (cond
-                          ;; a peer is opening a connection to a port we
-                          ;; listen on (passive open): queue the SYN and hand
-                          ;; the connection to the listener to accept.
-                          (listener-queue
-                           (lp.q:push-queue (list tcp-header rest-stream payload-size) queue)
-                           (lp.q:push-queue (list dst-ip dst-port src-ip src-port)
-                                            listener-queue))
-                          ;; a known connection: deliver a reset as a
-                          ;; condition, otherwise relay the segment.
-                          (queue
-                           (if (= 1 (tcp-header-rst tcp-header))
-                               (lp.q:push-queue (make-condition 'econnreset) queue)
-                               (lp.q:push-queue (list tcp-header rest-stream payload-size)
-                                                queue)))
-                          ;; a stray RST for a connection that is already
-                          ;; gone: nothing to do.
-                          ((= 1 (tcp-header-rst tcp-header)) nil)
-                          ;; nothing is listening on this 4-tuple (e.g. a
-                          ;; packet arriving after we tore the connection
-                          ;; down): reset the peer. The RST's sequence number
-                          ;; must be the ack number of the packet we're
-                          ;; replying to, otherwise the peer ignores it as
-                          ;; out of window.
-                          (t
-                           (send-packet c +tcp-protocol+ key
-                                        (%make-ipv4-tcp-packet dst-ip dst-port
-                                                               src-ip src-port
-                                                               :rst 1
-                                                               :seqno (tcp-header-ackno tcp-header))
-                                        :skip-connection t))))))))))))
-
-(defmethod receive-packet ((c openvpn-client-static-key) protocol key)
-  (let ((queue))
-    (bt:with-lock-held ((%connections-lock c))
-      (setf queue (gethash key (gethash protocol (%connections c)))))
-    ;; make sure we wait for new item *without* holding the lock, it
-    ;; could wait for a while and we want other packets to be
-    ;; processed in the meantime.
-    (let ((result (lp.q:pop-queue queue)))
-      (when (eq (type-of result) 'condition)
-        (error result))
-      result)))
-
-(defmethod poll-packet ((c openvpn-client-static-key) protocol key timeout)
-  "Like RECEIVE-PACKET but waits at most TIMEOUT seconds, returning NIL if
-no packet arrives in time."
-  (let ((queue))
-    (bt:with-lock-held ((%connections-lock c))
-      (setf queue (gethash key (gethash protocol (%connections c)))))
-    (multiple-value-bind (result presentp)
-        (lp.q:try-pop-queue queue :timeout timeout)
-      (when presentp
-        (when (eq (type-of result) 'condition)
-          (error result))
-        result))))
-
-(defmethod remove-connection ((c openvpn-client-static-key) protocol key)
-  (bt:with-lock-held ((%connections-lock c))
-    (remhash key (gethash protocol (%connections c)))))
-
-(defmethod find-free-client-port ((c openvpn-client-static-key))
-  (find-free-client-port (%vpn-connection c)))
-
-(defmethod release-client-port ((c openvpn-client-static-key) port)
-  (release-client-port (%vpn-connection c) port))
-
-(defun %error-callback (c)
-  (lambda (condition)
-    ;; just push the error to all the ongoing connections
-    (maphash (lambda (protocol table)
-               (declare (ignore protocol))
-               (maphash (lambda (key queue)
-                          (declare (ignore key))
-                          (lp.q:push-queue condition queue))
-                        table))
-             (%connections c))))
+    (%dispatch-inner-ip c type packet-header rest-stream)))
 
 (bin:defbinary openvpn-packet-id (:byte-order :big-endian)
   (packet-id 0 :type (unsigned-byte 32))

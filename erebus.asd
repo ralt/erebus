@@ -24,6 +24,7 @@
                              (:file "types")
                              (:file "ip")
                              (:file "vpn-connection")
+                             (:file "data-plane")
                              (:file "openvpn")
                              (:file "socket")
                              (:file "http")
