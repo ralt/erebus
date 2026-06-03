@@ -1,0 +1,26 @@
+#!/bin/sh
+# Bring up the strongSwan responder and the nginx backend inside the
+# container. Idempotent enough to be re-run by restart-style helpers.
+set -e
+
+# the server's in-tunnel address, where nginx answers.
+ip addr add 10.10.0.1/32 dev lo 2>/dev/null || true
+
+# let the kernel route decrypted traffic to the local backend and back.
+sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+
+mkdir -p /run/nginx
+nginx 2>/dev/null || true
+
+# start charon (with the vici interface swanctl talks to), then load config.
+ipsec start
+# give charon a moment to open the vici socket before loading config.
+i=0
+while [ $i -lt 50 ]; do
+    if swanctl --load-all 2>/dev/null; then
+        break
+    fi
+    i=$((i + 1))
+    sleep 0.2
+done
+swanctl --load-all

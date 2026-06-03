@@ -45,7 +45,8 @@
                              (:file "connect")
                              (:file "ikev2")
                              (:file "openvpn-statickey")
-                             (:file "expose"))))
+                             (:file "expose")
+                             (:file "ipsec"))))
   :perform (test-op (op c)
                     (symbol-call :fiveam :run!
                                  (find-symbol* :erebus :erebus/test))))
