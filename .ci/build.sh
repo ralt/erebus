@@ -1,28 +1,26 @@
 #!/usr/bin/env bash
 #
-# Build a native Linux package for erebus using linux-packaging
+# Build the native Debian package for erebus using linux-packaging
 # (https://gitlab.com/ralt/linux-packaging), via FPM.
 #
 # linux-packaging's build-op extends cffi-toolchain's static-program-op, which
 # links the SBCL runtime (sbcl.o + sbcl.mk) together with the dumped core into
-# a standalone executable. Modern distro SBCL packages ship those linkable-
-# runtime artifacts, so -- unlike linux-packaging's original CI -- we do NOT
-# need to compile SBCL from source; the stock package is enough. (We still need
-# libzstd at link time because the runtime is built with core compression.)
+# a standalone executable. Modern Debian SBCL ships those linkable-runtime
+# artifacts, so -- unlike linux-packaging's original CI -- we do NOT need to
+# compile SBCL from source; the stock package is enough. (We still need libzstd
+# at link time because the runtime is built with core compression.)
 #
-# Usage:   .ci/build.sh <deb|rpm|pacman>
-# Output:  the built package is copied into ./dist/
+# Usage:   .ci/build.sh
+# Output:  the built .deb is copied into ./dist/
 #
-# Designed to run as root inside a throwaway distro container -- that is how
-# both the GitHub Actions release workflow and `make package-*` drive it.
+# Designed to run as root inside a throwaway debian:stable container -- that is
+# how both the GitHub Actions release workflow and `make package-deb` drive it.
 
 set -xeuo pipefail
 
 # Some base images run as root without HOME set; we write quicklisp, gems and
 # clones under it, and `set -u` would otherwise abort on an unset $HOME.
 export HOME="${HOME:-/root}"
-
-t="${1:?usage: build.sh <deb|rpm|pacman>}"
 
 # linux-packaging picks this up; default mirrors its own default.
 export VERSION="${VERSION:-1.0.0}"
@@ -31,46 +29,23 @@ repo="$PWD"
 
 # FPM writes the package into the working directory and refuses to overwrite an
 # existing one, so clear any artifact left by a previous run before we start.
-rm -f "$repo"/*.deb "$repo"/*.rpm "$repo"/*.pkg.tar* 2>/dev/null || true
+rm -f "$repo"/*.deb 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# 1. Distro dependencies: SBCL (with its linkable-runtime artifacts), a C
-#    toolchain + libzstd for the final relink, FPM's ruby, and nodejs so the
-#    GitHub Actions steps can run inside these minimal images.
+# 1. Dependencies: SBCL (with its linkable-runtime artifacts), a C toolchain +
+#    libzstd for the final relink, FPM's ruby, and nodejs so the GitHub Actions
+#    steps can run inside the minimal image.
 # ---------------------------------------------------------------------------
-case "$t" in
-    deb)
-        apt-get update -qq
-        apt-get install -y --no-install-recommends \
-            ruby ruby-dev rubygems dpkg-dev sbcl curl git ca-certificates \
-            zlib1g-dev libzstd-dev build-essential nodejs
-        ;;
-    rpm)
-        dnf -y group install "Development Tools" || dnf -y groupinstall "Development Tools"
-        dnf install -y \
-            ruby ruby-devel rubygems rpm-build sbcl libffi-devel \
-            redhat-rpm-config git curl zlib-devel libzstd-devel nodejs
-        ;;
-    pacman)
-        pacman -Sy --noconfirm \
-            ruby rubygems sbcl git libffi gcc make curl which zstd nodejs
-        ;;
-    *)
-        echo "unknown package type: $t (expected deb, rpm or pacman)" >&2
-        exit 2
-        ;;
-esac
+apt-get update -qq
+apt-get install -y --no-install-recommends \
+    ruby ruby-dev rubygems dpkg-dev sbcl curl git ca-certificates \
+    zlib1g-dev libzstd-dev build-essential nodejs
 
 # ---------------------------------------------------------------------------
-# 2. FPM (the packager linux-packaging shells out to).
+# 2. FPM (the packager linux-packaging shells out to). Force its executable
+#    into a directory that is always on PATH.
 # ---------------------------------------------------------------------------
-gem install --no-document fpm
-# gem may install to a per-user dir or a system one depending on the distro;
-# add the per-user gem bindir to PATH when it exists, then make sure fpm is
-# actually reachable.
-if [ -d "$HOME/.gem/ruby" ]; then
-    export PATH="$HOME/.gem/ruby/$(ls "$HOME/.gem/ruby" | head -1)/bin:$PATH"
-fi
+gem install --no-document --bindir /usr/local/bin fpm
 command -v fpm >/dev/null || { echo "fpm not found on PATH after install" >&2; exit 1; }
 
 # Point SBCL_HOME at the directory holding the distro's sbcl.core. The
@@ -131,15 +106,13 @@ sbcl --non-interactive \
      --load ~/quicklisp/setup.lisp \
      --eval '(ql:quickload :linux-packaging)' \
      --eval '(asdf:load-asd (truename "erebus-packaging.asd"))' \
-     --eval "(asdf:make \"erebus-packaging/$t\")"
+     --eval '(asdf:make "erebus-packaging/deb")'
 
 # ---------------------------------------------------------------------------
 # 6. Collect the artifact.
 # ---------------------------------------------------------------------------
 mkdir -p dist
-find "$repo" "$HOME" -maxdepth 3 -type f \
-     \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar*' \) \
-     -exec cp -v {} dist/ \;
+find "$repo" "$HOME" -maxdepth 3 -type f -name '*.deb' -exec cp -v {} dist/ \;
 
-echo "Built packages:"
+echo "Built package:"
 ls -l dist/

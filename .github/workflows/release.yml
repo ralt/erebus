@@ -1,8 +1,8 @@
 name: release
 
-# Build native Linux packages with linux-packaging and attach them to a
+# Build the native Debian package with linux-packaging and attach it to a
 # GitHub Release. Triggered by pushing a version tag (e.g. v1.2.3); can also be
-# run by hand for a dry run (build artifacts only, no release published).
+# run by hand for a dry run (build artifact only, no release published).
 on:
   push:
     tags:
@@ -14,34 +14,16 @@ permissions:
 
 jobs:
   build:
-    name: build ${{ matrix.type }}
+    name: build deb
     runs-on: ubuntu-latest
     container:
-      image: ${{ matrix.image }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - type: deb
-            image: debian:stable
-          - type: rpm
-            image: fedora:rawhide
-          - type: pacman
-            image: archlinux:latest
+      image: debian:stable
     steps:
       # build.sh installs the rest (incl. git + nodejs); we only need enough
-      # for actions/checkout to run inside these minimal images. Done here
-      # rather than relying on the base image shipping them.
+      # for actions/checkout to run inside the minimal image. Done here rather
+      # than relying on the base image shipping them.
       - name: Bootstrap checkout deps
-        run: |
-          set -eux
-          if command -v apt-get >/dev/null; then
-            apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates nodejs
-          elif command -v dnf >/dev/null; then
-            dnf install -y git nodejs
-          elif command -v pacman >/dev/null; then
-            pacman -Sy --noconfirm git nodejs
-          fi
+        run: apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates nodejs
 
       - uses: actions/checkout@v4
 
@@ -54,13 +36,13 @@ jobs:
           fi
           echo "VERSION=$v" >> "$GITHUB_ENV"
 
-      - name: Build ${{ matrix.type }} package
-        run: ./.ci/build.sh ${{ matrix.type }}
+      - name: Build deb package
+        run: ./.ci/build.sh
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: erebus-${{ matrix.type }}
+          name: erebus-deb
           path: dist/*
           if-no-files-found: error
 
@@ -68,11 +50,9 @@ jobs:
     name: publish release
     needs: build
     runs-on: ubuntu-latest
-    # Run on any tag build even if some matrix legs failed, so a confirmed
-    # package still ships when an untested distro leg breaks.
-    if: ${{ always() && github.ref_type == 'tag' }}
+    if: github.ref_type == 'tag'
     steps:
-      - name: Download package artifacts that built
+      - name: Download package artifact
         uses: actions/download-artifact@v4
         with:
           path: dist
@@ -85,6 +65,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          # don't fail the release if a distro leg produced nothing
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
           generate_release_notes: true

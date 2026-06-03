@@ -116,20 +116,12 @@ The roadmap prioritizes incremental progress and interoperability over completen
 
 ### From a release package
 
-Native packages for Debian/Ubuntu (`.deb`), Fedora/RHEL (`.rpm`) and
-Arch (pacman) are attached to each
-[GitHub Release](https://github.com/ralt/erebus/releases). Download the one for
-your distribution and install it, e.g.:
+A Debian package (`.deb`, for Debian/Ubuntu and derivatives) is attached to
+each [GitHub Release](https://github.com/ralt/erebus/releases). Download it and
+install it, e.g.:
 
 ```sh
-# Debian / Ubuntu
 sudo apt install ./erebus_*_amd64.deb
-
-# Fedora / RHEL
-sudo dnf install ./erebus-*.rpm
-
-# Arch
-sudo pacman -U ./erebus-*.pkg.tar.zst
 ```
 
 This installs the `erebus` binary, the [man page](doc/erebus.1)
@@ -139,19 +131,19 @@ This installs the `erebus` binary, the [man page](doc/erebus.1)
 erebus --config /etc/erebus/erebus.ini
 ```
 
-The packages are produced by
+The package is produced by
 [linux-packaging](https://gitlab.com/ralt/linux-packaging), which turns the
-ASDF system into a distribution package; the release is built automatically by
-the `release` GitHub Actions workflow when a `vX.Y.Z` tag is pushed.
+ASDF system into a Debian package; the release is built automatically by the
+`release` GitHub Actions workflow when a `vX.Y.Z` tag is pushed.
 
-### Building a package yourself
+### Building the package yourself
 
-You can reproduce a release package locally in a throwaway container (this is
+You can reproduce the release package locally in a throwaway container (this is
 exactly what CI does; it installs a toolchain and compiles the Lisp
 dependencies, so it takes a few minutes the first time):
 
 ```sh
-make package-deb       # or package-rpm / package-pacman
+make package-deb
 make package-deb VERSION=1.2.3
 ```
 
