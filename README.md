@@ -4,7 +4,7 @@ This project is an experimental, user-space VPN client that exposes access to pr
 
 Instead of configuring system-wide tunnels, kernel interfaces, or requiring elevated privileges, erebus runs entirely in user space and forwards traffic explicitly through a proxy interface.
 
-The initial focus is interoperability with OpenVPN servers (in both UDP and TCP modes), with longer-term support planned for IPsec (ESP) and IKE.
+The initial focus was interoperability with OpenVPN servers (in both UDP and TCP modes); erebus now also speaks standard IPsec, interoperating with strongSwan over IKEv2 (pre-shared key) and ESP.
 
 The primary goal is the ability to converse with VPNs in constrained environments.
 
@@ -82,8 +82,10 @@ All VPN-related logic lives in user space. The operating system kernel is not in
 
 ## Protocol scope
 
-Short term:
+Implemented:
 - OpenVPN with static-key encryption (UDP/TCP, tun mode)
+- IPsec: IKEv2 control plane (pre-shared key) + ESP data plane, interoperating
+  with strongSwan (UDP-encapsulated / NAT-T, since erebus is rootless)
 - Outbound HTTP proxy for VPN resources
 - Minimal TCP stack for outbound connections
 - Inbound TCP handling to expose local services
@@ -91,8 +93,7 @@ Short term:
 
 Longer term:
 - TLS control channel for OpenVPN
-- IPsec ESP tunnel support
-- IKEv2 key management for IPsec
+- Certificate / EAP authentication for IPsec
 - Performance improvements, compression, and advanced TCP handling
 
 ## Project status

@@ -70,8 +70,20 @@ The codebase is small and layered; each layer only knows about the one below it.
 | Port forward (inbound) | `src/socket.lisp` (`expose`/`%relay`) | Accept VPN connections, relay to a local OS socket |
 | User-space sockets / TCP | `src/socket.lisp` | Active & passive open, segments, ACKs, orderly close |
 | IP / TCP / ICMP packets | `src/ip.lisp` | Build and parse IPv4, TCP, and ICMP-echo, with checksums |
-| OpenVPN static-key | `src/openvpn.lisp` | Encrypt/auth (AES/ARIA/Camellia-CBC + HMAC), packet IDs, ping, demux |
+| Data plane (shared) | `src/data-plane.lisp` | Per-connection queues, listeners, ephemeral ports, inner-IP demux |
+| ↳ OpenVPN static-key | `src/openvpn.lisp` | Encrypt/auth (AES/ARIA/Camellia-CBC + HMAC), packet IDs, ping |
+| ↳ IPsec (IKEv2 + ESP) | `src/ikev2.lisp`, `src/esp.lisp` | IKEv2 PSK handshake + key schedule; ESP encrypt/auth; demux |
 | Transport | `src/vpn-connection.lisp` | UDP datagrams or length-prefixed TCP stream; reader/writer threads |
+
+Everything above the data plane is encapsulation-agnostic. `src/data-plane.lisp`
+defines a `vpn-data-plane` base class holding all the machinery the TCP stack and
+proxy depend on — per-connection packet queues keyed by the inner-IP four-tuple,
+passive-open listeners, exposures, ephemeral-port allocation, and the demux that
+routes a decapsulated inner IPv4 packet to the right place. A concrete client
+only supplies two things: how to encapsulate-and-send an inner IP packet, and how
+to decapsulate a received one before handing it to the shared demux. OpenVPN and
+IPsec are just two implementations of that contract; the entire stack above them
+is reused verbatim (this was the point of roadmap Phase 9).
 
 Data flows down on the way out and up on the way in:
 
@@ -89,14 +101,25 @@ Data flows down on the way out and up on the way in:
    IPv4 / TCP packet  (ip.lisp)
         │
         ▼
-   OpenVPN encrypt + HMAC + packet-id  (openvpn.lisp)
+   data plane: demux / per-connection queues  (data-plane.lisp)
+        │
+        ▼
+   encapsulate: OpenVPN encrypt+HMAC+packet-id  (openvpn.lisp)
+            -or- IKEv2/ESP encrypt+HMAC         (ikev2.lisp, esp.lisp)
         │
         ▼
    UDP datagram  /  TCP length-prefixed frame  (vpn-connection.lisp)
         │
         ▼
-   OpenVPN server
+   OpenVPN server  -or-  strongSwan (IKEv2/IPsec)
 ```
+
+The IPsec path is rootless like the rest: because we cannot open a raw
+IP-protocol-50 socket, both IKE and ESP ride inside UDP (NAT-T), and erebus
+forces NAT detection so the server floats to port 4500. The IKEv2 control plane
+(`ikev2.lisp`) does a pre-shared-key handshake — MODP-2048 Diffie-Hellman,
+AES-256-CBC + HMAC-SHA-256 — and derives the ESP keys; `esp.lisp` then runs the
+data plane and learns our VPN address from the server's configuration payload.
 
 The transport layer is genuinely abstract: a single reader thread and a single
 writer thread move opaque packets, and the only difference between UDP and TCP
