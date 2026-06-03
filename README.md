@@ -112,6 +112,61 @@ This is an early-stage project. Current support includes:
 
 The roadmap prioritizes incremental progress and interoperability over completeness.
 
+## Installation
+
+### From a release package
+
+Native packages for Debian/Ubuntu (`.deb`), Fedora/RHEL (`.rpm`) and
+Arch (pacman) are attached to each
+[GitHub Release](https://github.com/ralt/erebus/releases). Download the one for
+your distribution and install it, e.g.:
+
+```sh
+# Debian / Ubuntu
+sudo apt install ./erebus_*_amd64.deb
+
+# Fedora / RHEL
+sudo dnf install ./erebus-*.rpm
+
+# Arch
+sudo pacman -U ./erebus-*.pkg.tar.zst
+```
+
+This installs the `erebus` binary, the [man page](doc/erebus.1)
+(`man erebus`), and an annotated config under `/usr/share/doc/erebus/`. Then:
+
+```sh
+erebus --config /etc/erebus/erebus.ini
+```
+
+The packages are produced by
+[linux-packaging](https://gitlab.com/ralt/linux-packaging), which turns the
+ASDF system into a distribution package; the release is built automatically by
+the `release` GitHub Actions workflow when a `vX.Y.Z` tag is pushed.
+
+### Building a package yourself
+
+You can reproduce a release package locally in a throwaway container (this is
+exactly what CI does; it installs a toolchain and compiles the Lisp
+dependencies, so it takes a few minutes the first time):
+
+```sh
+make package-deb       # or package-rpm / package-pacman
+make package-deb VERSION=1.2.3
+```
+
+The result lands in `./dist/`. The packaging system definitions live in
+[`erebus-packaging.asd`](erebus-packaging.asd) and the build recipe in
+[`.ci/build.sh`](.ci/build.sh).
+
+### Building just the binary
+
+To build only the standalone executable (no packaging, ordinary SBCL):
+
+```sh
+make            # produces ./erebus
+```
+
 ## Development environment
 
 In order to help out during development, the `erebus/test` package provides a few helpers, most notably:

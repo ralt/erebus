@@ -31,4 +31,20 @@ stress-inbound:
 man:
 	man ./doc/erebus.1
 
-.PHONY: test verify stress stress-inbound man
+# Build native Linux packages with linux-packaging, in a throwaway container
+# that matches the release CI. Requires docker; the package lands in ./dist/.
+# Pass VERSION=x.y.z to stamp a version (defaults to 1.0.0). NB: the container
+# installs a toolchain and compiles the Lisp dependencies, so it takes a few
+# minutes the first time.
+DOCKER ?= docker
+
+package-deb:
+	$(DOCKER) run --rm -e VERSION=$(VERSION) -v "$(CURDIR)":/src -w /src debian:stable ./.ci/build.sh deb
+
+package-rpm:
+	$(DOCKER) run --rm -e VERSION=$(VERSION) -v "$(CURDIR)":/src -w /src fedora:rawhide ./.ci/build.sh rpm
+
+package-pacman:
+	$(DOCKER) run --rm -e VERSION=$(VERSION) -v "$(CURDIR)":/src -w /src archlinux:latest ./.ci/build.sh pacman
+
+.PHONY: test verify stress stress-inbound man package-deb package-rpm package-pacman

@@ -1,0 +1,87 @@
+name: release
+
+# Build native Linux packages with linux-packaging and attach them to a
+# GitHub Release. Triggered by pushing a version tag (e.g. v1.2.3); can also be
+# run by hand for a dry run (build artifacts only, no release published).
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create the Release and upload assets
+
+jobs:
+  build:
+    name: build ${{ matrix.type }}
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - type: deb
+            image: debian:stable
+          - type: rpm
+            image: fedora:rawhide
+          - type: pacman
+            image: archlinux:latest
+    steps:
+      # build.sh installs the rest (incl. git + nodejs); we only need enough
+      # for actions/checkout to run inside these minimal images. Done here
+      # rather than relying on the base image shipping them.
+      - name: Bootstrap checkout deps
+        run: |
+          set -eux
+          if command -v apt-get >/dev/null; then
+            apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates nodejs
+          elif command -v dnf >/dev/null; then
+            dnf install -y git nodejs
+          elif command -v pacman >/dev/null; then
+            pacman -Sy --noconfirm git nodejs
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Compute package version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            v="${GITHUB_REF_NAME#v}"   # strip leading "v" from the tag
+          else
+            v="0.0.0"                  # manual / untagged dry run
+          fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+
+      - name: Build ${{ matrix.type }} package
+        run: ./.ci/build.sh ${{ matrix.type }}
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: erebus-${{ matrix.type }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref_type == 'tag'
+    steps:
+      - name: Download all package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lR dist
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true

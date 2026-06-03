@@ -1,3 +1,7 @@
 .git-ignore-me-*
 t/junk
 erebus
+dist/
+*.deb
+*.rpm
+*.pkg.tar*
