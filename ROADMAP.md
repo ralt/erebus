@@ -228,7 +228,13 @@ Notes:
     it's the wrong tool), and an FAQ.
 * No new protocol features, by design.
 
-## Phase 8 — OpenVPN TLS support (UDP and TCP)
+## ⏭️ Phase 8 — OpenVPN TLS support (UDP and TCP) — *skipped for now*
+
+Intentionally skipped: it is a lot of work (control channel, TLS handshake
+inside control packets, key derivation and rotation) for limited additional
+value at this stage. Phase 9 (standard IPsec) was prioritized instead because
+it generalizes the architecture to a second, widely deployed protocol family.
+This phase remains on the roadmap and can be picked up later.
 
 Goal: add full TLS-based OpenVPN support on top of an already working transport and proxy stack.
 

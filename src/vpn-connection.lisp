@@ -6,17 +6,21 @@
    (port :initarg :port :reader port)
    (reader-callback :initarg :reader-callback :reader reader-callback)
    (error-callback :initarg :error-callback :reader error-callback)
-   (%socket :accessor %socket)
+   ;; the underlying OS socket. Usually opened by CONNECT, but a caller that
+   ;; has already established one (e.g. the IPsec client, which floats its UDP
+   ;; socket to port 4500 during the IKE handshake) can pass it in via :socket.
+   (%socket :initarg :socket :accessor %socket)
    (%reader-thread :accessor %reader-thread)
    (%writer-thread :accessor %writer-thread)
    (%writer-queue :accessor %writer-queue)
    (%client-ports :accessor %client-ports :initform nil)))
 
 (defmethod connect ((c vpn-connection))
-  (setf (%socket c)
-        (u:socket-connect (host c) (port c)
-                          :protocol (protocol c)
-                          :element-type 'octet))
+  (unless (slot-boundp c '%socket)
+    (setf (%socket c)
+          (u:socket-connect (host c) (port c)
+                            :protocol (protocol c)
+                            :element-type 'octet)))
   (setf (%writer-queue c) (lp.q:make-queue))
   (setf (%reader-thread c) (bt:make-thread (%reader-loop c) :name "reader thread"))
   (setf (%writer-thread c) (bt:make-thread (%writer-loop c) :name "writer thread")))

@@ -318,6 +318,93 @@ bind PROXY-PORT to it for the duration of BODY, and stop it afterwards."
          (cleanup-container ,container-name ,container-folder)))))
 
 ;;; ---------------------------------------------------------------------------
+;;; IPsec / strongSwan harness (Phase 9)
+;;;
+;;; A parallel set of helpers for the strongSwan reference server. Unlike the
+;;; OpenVPN image, all server config (PSK, pool, the in-tunnel nginx address)
+;;; is baked into the image, so there is no per-test config generation: just
+;;; publish the IKE (500) and NAT-T (4500) ports and run start-ipsec.
+;;;
+;;; The PSK matches t/fixtures/ipsec/swanctl.conf; the server's in-tunnel
+;;; address (where nginx answers) is 10.10.0.1; the client is assigned an
+;;; address out of the 10.9.0.0/24 pool (the first lease is 10.9.0.1).
+;;; ---------------------------------------------------------------------------
+
+(defparameter +ipsec-psk+ "erebustestpsk")
+(defparameter +ipsec-server-ip+ "10.10.0.1")
+(defparameter +ipsec-client-ip+ "10.9.0.1")
+
+(defun ensure-ipsec-image ()
+  "Build ralt/erebus-ipsec:latest, but only when Dockerfile.ipsec changed
+since the last build (stamp file), mirroring ENSURE-TEST-IMAGE."
+  (let* ((dir (erebus-test-dir))
+         (dockerfile (probe-file (merge-pathnames "Dockerfile.ipsec" dir)))
+         (stamp-name (merge-pathnames ".git-ignore-me-container-ipsec" dir))
+         (stamp (probe-file stamp-name)))
+    (when (or (not stamp)
+              (> (file-write-date dockerfile) (file-write-date stamp)))
+      (uiop:run-program
+       (format nil "cd ~a && docker build -f Dockerfile.ipsec -t ralt/erebus-ipsec:latest ."
+               (namestring dir))
+       :output t :error-output t)
+      (close (open stamp-name :direction :output
+                              :if-exists :supersede :if-does-not-exist :create)))))
+
+(defun create-ipsec-container (name ike-port natt-port)
+  (uiop:run-program
+   (format nil "docker create \\
+                 --privileged \\
+                 --publish ~a:500/udp \\
+                 --publish ~a:4500/udp \\
+                 --name ~a \\
+                 ralt/erebus-ipsec:latest"
+           ike-port natt-port name)
+   :output t :error-output t))
+
+(defun start-ipsec-services (name)
+  (run-in-container name "start-ipsec"))
+
+(defun cleanup-ipsec-container (name)
+  (uiop:run-program (format nil "docker rm --force ~a" name) :output t :error-output t))
+
+(defun make-ipsec-test-client (ike-port natt-port &rest initargs)
+  "Make an ipsec-client pointing at the strongSwan container published on
+IKE-PORT (500) and NATT-PORT (4500)."
+  (apply #'make-instance 'erebus::ipsec-client
+         (append initargs
+                 (list :host "localhost"
+                       :ike-port ike-port
+                       :natt-port natt-port
+                       :psk +ipsec-psk+))))
+
+(defmacro with-ipsec-test-client ((client ike-port natt-port &rest initargs) &body body)
+  "Bind CLIENT to a connected IPsec test client and disconnect it afterwards."
+  `(let ((,client (make-ipsec-test-client ,ike-port ,natt-port ,@initargs)))
+     (connect ,client)
+     (unwind-protect (progn ,@body)
+       (disconnect ,client))))
+
+(defmacro with-ipsec-container ((name ike-port natt-port) &body body)
+  "Spin up a strongSwan container (distinct random IKE / NAT-T host ports),
+start its services, run BODY, then tear it down."
+  `(progn
+     (ensure-ipsec-image)
+     (let* ((,name (format nil "erebus_ipsec_~a" (random-string 20)))
+            ;; keep the two published ports in disjoint ranges so they can
+            ;; never collide with each other.
+            (,ike-port (funcall (gen-integer :min 10000 :max 34999)))
+            (,natt-port (funcall (gen-integer :min 35000 :max 60000))))
+       (declare (ignorable ,name ,ike-port ,natt-port))
+       (unwind-protect
+            (progn
+              (create-ipsec-container ,name ,ike-port ,natt-port)
+              (uiop:run-program (format nil "docker start ~a" ,name)
+                                :output t :error-output t)
+              (start-ipsec-services ,name)
+              (progn ,@body))
+         (cleanup-ipsec-container ,name)))))
+
+;;; ---------------------------------------------------------------------------
 ;;; Manual, interactive testing from the REPL
 ;;;
 ;;; Typical session:
@@ -379,3 +466,44 @@ For example, with a local web server on port 8080:
   ;;   (run-in-container \"erebus-dev\" \"curl -s http://10.8.0.2:8080/\")
   (unexpose *e)"
   (expose client :vpn-port vpn-port :host host :port port))
+
+;;; --- IPsec / strongSwan manual dev helpers ---------------------------------
+;;;
+;;; Typical session:
+;;;   (in-package :erebus/test)
+;;;   (dev-ipsec-up)                       ; build image if needed, start strongSwan
+;;;   (defparameter *c (dev-ipsec-client)) ; connect; gets assigned 10.9.0.1
+;;;   (defparameter *p (dev-proxy *c))     ; HTTP proxy on localhost:11023
+;;;   ;; in a shell: http_proxy=http://localhost:11023 curl http://10.10.0.1
+;;;   (hunchentoot:stop *p) (disconnect *c) (dev-ipsec-down)
+
+(defvar *dev-ipsec-container* nil)
+(defvar *dev-ipsec-ike-port* nil)
+(defvar *dev-ipsec-natt-port* nil)
+
+(defun dev-ipsec-up (&key (name "erebus-ipsec-dev") (ike-port 11500) (natt-port 11504))
+  "Bring up a long-running strongSwan container for manual testing. Returns
+\(values name ike-port natt-port)."
+  (ensure-ipsec-image)
+  (create-ipsec-container name ike-port natt-port)
+  (uiop:run-program (format nil "docker start ~a" name) :output t :error-output t)
+  (start-ipsec-services name)
+  (setf *dev-ipsec-container* name
+        *dev-ipsec-ike-port* ike-port
+        *dev-ipsec-natt-port* natt-port)
+  (values name ike-port natt-port))
+
+(defun dev-ipsec-down (&optional (name *dev-ipsec-container*))
+  "Tear down the manual strongSwan container from DEV-IPSEC-UP."
+  (when name
+    (cleanup-ipsec-container name)
+    (setf *dev-ipsec-container* nil *dev-ipsec-ike-port* nil *dev-ipsec-natt-port* nil)))
+
+(defun dev-ipsec-client (&rest initargs)
+  "Build and connect an ipsec-client against the running dev container.
+Returns the connected client; remember to (disconnect ...) it. The server's
+in-tunnel address is 10.10.0.1; this client is assigned 10.9.0.1."
+  (let ((client (apply #'make-ipsec-test-client
+                       *dev-ipsec-ike-port* *dev-ipsec-natt-port* initargs)))
+    (connect client)
+    client))

@@ -16,6 +16,7 @@
            #:ping
            #:disconnect
            #:openvpn-client-static-key
+           #:ipsec-client
            #:openvpn-connect
            #:socket-connect
            #:socket-stream

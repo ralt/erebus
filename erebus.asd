@@ -24,7 +24,10 @@
                              (:file "types")
                              (:file "ip")
                              (:file "vpn-connection")
+                             (:file "data-plane")
                              (:file "openvpn")
+                             (:file "ikev2")
+                             (:file "esp")
                              (:file "socket")
                              (:file "http")
                              (:file "main"))))
@@ -40,8 +43,10 @@
                 :serial t
                 :components ((:file "package")
                              (:file "connect")
+                             (:file "ikev2")
                              (:file "openvpn-statickey")
-                             (:file "expose"))))
+                             (:file "expose")
+                             (:file "ipsec"))))
   :perform (test-op (op c)
                     (symbol-call :fiveam :run!
                                  (find-symbol* :erebus :erebus/test))))

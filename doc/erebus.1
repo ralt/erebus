@@ -59,17 +59,20 @@ The configuration file is INI-style: \fB[section]\fR headers, \fBkey = value\fR
 pairs, and \fB;\fR or \fB#\fR comments. Which sections are present determines
 what
 .B erebus
-does. A connection is started when an \fB[openvpn-server]\fR section is found;
-the proxy is started only if \fB[proxy-out]\fR is present; inbound forwards are
-started for each entry under \fB[proxy-in]\fR.
+does. A connection is started when an \fB[openvpn-server]\fR or an
+\fB[ipsec-server]\fR section is found (exactly one should be present); the proxy
+is started only if \fB[proxy-out]\fR is present; inbound forwards are started for
+each entry under \fB[proxy-in]\fR.
 .SS [erebus]
 General client settings.
 .TP
 .B client-ip
-The IPv4 address this client occupies on the VPN (e.g. \fB10.8.0.2\fR). In
-static-key mode the addressing is fixed by configuration on both ends rather
-than pushed by the server, so this must match the server's expectation. This is
-also the address VPN peers use to reach any \fB[proxy-in]\fR forwards.
+The IPv4 address this client occupies on the VPN (e.g. \fB10.8.0.2\fR). Used in
+OpenVPN static-key mode only, where addressing is fixed by configuration on both
+ends rather than pushed by the server, so this must match the server's
+expectation. It is also the address VPN peers use to reach any \fB[proxy-in]\fR
+forwards. In \fB[ipsec-server]\fR mode this setting is ignored: the server
+assigns the VPN address during the IKEv2 handshake.
 .SS [openvpn-server]
 The VPN server to connect to. Its presence triggers a connection.
 .TP
@@ -120,6 +123,41 @@ The
 and
 .B auth
 values must match the server's.
+.SS [ipsec-server]
+An IKEv2/IPsec server (interoperates with strongSwan) to connect to, as an
+alternative to \fB[openvpn-server]\fR. Authentication is pre-shared key (PSK)
+only. The negotiated crypto suite is fixed and must be enabled on the server:
+IKE \fBaes256-sha256-modp2048\fR, ESP \fBaes256-sha256\fR (no PFS).
+.IP
+Because
+.B erebus
+is rootless and cannot send raw ESP (IP protocol 50), all traffic is
+UDP-encapsulated (NAT-T);
+.B erebus
+forces this, so the server floats to port 4500. The client's VPN address is
+.I not
+configured \(em it is assigned by the server during the handshake via an IKEv2
+configuration payload.
+.TP
+.B host
+Server hostname or IP address.
+.TP
+.B port
+The IKE port (UDP). Default \fB500\fR. Only set this if the server or an
+intervening NAT remaps it.
+.TP
+.B natt-port
+The NAT-T / ESP port (UDP). Default \fB4500\fR. As with
+.BR port ,
+only set it if it is remapped.
+.TP
+.B psk
+The pre-shared key, matching the server's secret.
+.TP
+.B local-id
+The identity (IDi) presented to the server. Any string the server's PSK
+configuration accepts; a responder configured with \fB%any\fR accepts any value.
+Default \fBerebus\fR.
 .SS [proxy-out]
 The local outbound HTTP proxy. Optional; if omitted, no proxy is started and
 .B erebus
@@ -197,6 +235,23 @@ web = 8080 127.0.0.1:8080
 A VPN peer then reaches it at
 .RB \(lq "http://10.8.0.2:8080/" \(rq
 (assuming \fBclient-ip = 10.8.0.2\fR).
+.PP
+The same outbound proxy, but against an IKEv2/IPsec (strongSwan) server with a
+pre-shared key. Note there is no
+.B client-ip
+\(em the server assigns one:
+.PP
+.nf
+.RS
+[ipsec-server]
+host = vpn.example.com
+psk  = the-shared-secret
+
+[proxy-out]
+address = 127.0.0.1
+port    = 11023
+.RE
+.fi
 .SH FILES
 .TP
 .I erebus.ini

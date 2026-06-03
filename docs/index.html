@@ -233,11 +233,12 @@
     <header class="hero" id="top">
         <h1>erebus</h1>
         <p class="tagline">A VPN client that runs entirely in user space — no root, no kernel tunnels, no global routing.</p>
-        <p class="sub">erebus speaks OpenVPN itself, builds its own IP packets, runs its own minimal TCP/IP stack, and hands you VPN access through an ordinary local HTTP proxy. It's a VPN <em>agent</em>, not a system-wide VPN.</p>
+        <p class="sub">erebus speaks OpenVPN and IPsec/IKEv2 itself, builds its own IP packets, runs its own minimal TCP/IP stack, and hands you VPN access through an ordinary local HTTP proxy. It's a VPN <em>agent</em>, not a system-wide VPN.</p>
         <div class="pills">
             <span class="pill">Rootless</span>
             <span class="pill">No TUN/TAP</span>
             <span class="pill">OpenVPN static-key</span>
+            <span class="pill">IPsec / IKEv2</span>
             <span class="pill">UDP &amp; TCP</span>
             <span class="pill">Inbound &amp; outbound</span>
         </div>
@@ -366,6 +367,11 @@ web = 8080 127.0.0.1:8080</code></pre>
             <details>
                 <summary>Which OpenVPN modes are supported?</summary>
                 <p>Static-key mode only (pre-shared key, also called wire format v1), over UDP or TCP. CBC ciphers — AES, ARIA and Camellia at 128/192/256 — and a wide range of HMAC digests. The <code>cipher</code> and <code>auth</code> values must match the server. TLS mode, certificates and the control channel are planned but not yet implemented.</p>
+            </details>
+
+            <details>
+                <summary>Does it really do IPsec too?</summary>
+                <p>Yes — an IKEv2 control plane and an ESP data plane that interoperate with strongSwan, all in the same rootless user space. Authentication is pre-shared key for now; the suite is MODP-2048 Diffie-Hellman with AES-256-CBC and HMAC-SHA-256. Since a rootless process can't send raw ESP, everything is UDP-encapsulated (NAT-T), and your VPN address is assigned by the server during the handshake. Certificate and EAP authentication are not implemented yet.</p>
             </details>
 
             <details>
