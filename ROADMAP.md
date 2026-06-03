@@ -281,6 +281,9 @@ Goal: improve efficiency and robustness after correctness is established.
 
 Potential areas:
 
+* HTTPS `CONNECT` tunnelling in the outbound proxy (opaque TLS pass-through).
+    Small and mostly reuses existing code; design written up in
+    [doc/https-connect-plan.md](doc/https-connect-plan.md).
 * socks5 proxy (required if we want to support forwarding UDP)
 * UDP (probably not so optional, just not in the path of an http proxy)
 * Proxy to TLS backends
