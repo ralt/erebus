@@ -55,6 +55,42 @@ the connection (FIN) without further data."
             ;; the next segment.
             (t nil)))))))
 
+(defparameter *relay-poll-timeout* 0.05
+  "Seconds we wait on a connection's packet queue per poll when we are
+driving it ourselves (the relay's select loop, and SOCKET-CLOSE's bounded
+drain). The relay is single-threaded by design, so it polls each side in
+turn; this trades a little latency for a simple, easy-to-follow design
+rather than chasing throughput.")
+
+(defun %fill-read-buffer-poll (s timeout)
+  "Like %FILL-READ-BUFFER but waits at most TIMEOUT seconds for a segment.
+Returns :DATA when payload was buffered, :EOF when the peer has closed, or
+:NONE when nothing usable arrived in time."
+  (let* ((socket (%socket s))
+         (client (client socket))
+         (packet (poll-packet client +tcp-protocol+ (%key socket) timeout)))
+    (if (null packet)
+        :none
+        (destructuring-bind (tcp-header rest-stream size) packet
+          (let ((fin (= 1 (tcp-header-fin tcp-header))))
+            (cond
+              ((> size 0)
+               (let ((buffer (make-array size :element-type 'octet)))
+                 (read-sequence buffer rest-stream)
+                 (%next-ackno socket (+ size (if fin 1 0)))
+                 (%send-ack socket)
+                 (when fin (setf (%eof socket) t))
+                 (setf (%read-buffer s) buffer)
+                 (setf (%read-pos s) 0)
+                 :data))
+              (fin
+               (%next-ackno socket 1)
+               (%send-ack socket)
+               (setf (%eof socket) t)
+               :eof)
+              ;; a bare ACK: nothing to deliver this tick.
+              (t :none)))))))
+
 (defun %read-buffer-empty-p (s)
   (>= (%read-pos s) (length (%read-buffer s))))
 
@@ -160,11 +196,18 @@ result the new read buffer."
    (protocol :initarg :protocol :reader protocol)
    (host :initarg :host :reader host)
    (port :initarg :port :reader port)
+   ;; a passive socket is one the peer opened (an inbound connection we
+   ;; accepted), as opposed to one we opened ourselves. The two differ
+   ;; only in how they reach the ESTABLISHED state (active vs passive
+   ;; open) and in port bookkeeping at close time.
+   (%passive :initarg :passive :reader %passive :initform nil)
    (stream :reader socket-stream :accessor %stream)
-   (%src-ip :accessor %src-ip)
-   (%src-port :accessor %src-port)
-   (%dst-ip :accessor %dst-ip)
-   (%dst-port :accessor %dst-port)
+   ;; for a passive socket the four-tuple is known up front (it comes
+   ;; from the inbound SYN), so allow it to be supplied as initargs.
+   (%src-ip :initarg :src-ip :accessor %src-ip)
+   (%src-port :initarg :src-port :accessor %src-port)
+   (%dst-ip :initarg :dst-ip :accessor %dst-ip)
+   (%dst-port :initarg :dst-port :accessor %dst-port)
    (%seqno :accessor %seqno :initform 0)
    (%ackno :accessor %ackno)
    ;; set once the peer has sent us a FIN
@@ -182,7 +225,13 @@ result the new read buffer."
   (mod (incf (%ackno s) delta) +max-32-bytes+))
 
 (defmethod initialize-instance :after ((s client-socket) &key)
-  ;; establish tcp connection
+  (if (%passive s)
+      (%passive-open s)
+      (%active-open s)))
+
+(defun %active-open (s)
+  "Open a connection we initiate: send a SYN, expect the SYN-ACK, and ACK
+it (the classic three-way handshake from the client side)."
   (setf (%seqno s) (random #xffffffff))
   (let* ((client (client s))
          (src-port (find-free-client-port client))
@@ -224,6 +273,68 @@ result the new read buffer."
       ;; expose the stream once connection is established
       (setf (%stream s) (make-instance '%socket-stream :socket s)))))
 
+(defun %passive-open (s)
+  "Complete a connection a peer opened to us. The reader has already
+queued the inbound SYN for our four-tuple (set from initargs); reply with
+a SYN-ACK and wait for the final ACK. Mirrors %ACTIVE-OPEN's sequence
+arithmetic from the server side."
+  (setf (%seqno s) (random #xffffffff))
+  (let ((client (client s))
+        (key (%key s)))
+    ;; the peer's SYN
+    (destructuring-bind (tcp-header rest-stream size)
+        (receive-packet client +tcp-protocol+ key)
+      (declare (ignore rest-stream size))
+      (assert (= 1 (tcp-header-syn tcp-header)))
+      (assert (= 0 (tcp-header-ack tcp-header)))
+      (setf (%ackno s) (tcp-header-seqno tcp-header)))
+
+    ;; prepare our SYN-ACK's sequence numbers: it occupies one sequence
+    ;; number (like a SYN) and acknowledges the peer's SYN. We advance now
+    ;; so a retransmitted SYN-ACK carries the same numbers.
+    (%next-seqno s)                     ; our ISN+1
+    (%next-ackno s)                     ; peer ISN+1
+    (flet ((send-syn-ack ()
+             (send-packet client +tcp-protocol+ key
+                          (%make-ipv4-tcp-packet (%src-ip s) (%src-port s)
+                                                 (%dst-ip s) (%dst-port s)
+                                                 :syn 1
+                                                 :ack 1
+                                                 :seqno (%seqno s)
+                                                 :ackno (%ackno s)))))
+      (send-syn-ack)
+      ;; expose the stream now, so that a final ACK piggybacking the first
+      ;; data segment (a single ACK+PSH packet) is not lost.
+      (setf (%stream s) (make-instance '%socket-stream :socket s))
+      ;; wait for the peer's final ACK (may already carry data). A peer
+      ;; that didn't see our SYN-ACK retransmits its SYN; resend the
+      ;; SYN-ACK and keep waiting rather than failing the handshake.
+      (let ((stream (socket-stream s)))
+        (loop
+          (destructuring-bind (tcp-header rest-stream size)
+              (receive-packet client +tcp-protocol+ key)
+            (cond
+              ((and (= 1 (tcp-header-syn tcp-header))
+                    (= 0 (tcp-header-ack tcp-header)))
+               (send-syn-ack))          ; retransmitted SYN: resend SYN-ACK
+              ((= 1 (tcp-header-ack tcp-header))
+               (assert (= (mod (1+ (%seqno s)) +max-32-bytes+)
+                          (tcp-header-ackno tcp-header)))
+               ;; our SYN-ACK consumed one sequence number.
+               (%next-seqno s)
+               (let ((fin (= 1 (tcp-header-fin tcp-header))))
+                 (when (> size 0)
+                   (let ((buffer (make-array size :element-type 'octet)))
+                     (read-sequence buffer rest-stream)
+                     (%next-ackno s (+ size (if fin 1 0)))
+                     (%send-ack s)
+                     (%stash-read stream buffer)))
+                 (when (and fin (zerop size))
+                   (%next-ackno s 1)
+                   (%send-ack s)
+                   (setf (%eof s) t)))
+               (return)))))))))
+
 (defun socket-connect (client &key (protocol :stream) host port)
   (declare (ignore protocol))
   (make-instance 'client-socket
@@ -255,12 +366,181 @@ than once."
                                               :ackno (%ackno s)))
           (%next-seqno s)
           ;; drain until the peer has sent its FIN too, discarding any
-          ;; remaining payload.
-          (loop until (%eof s)
-                do (%fill-read-buffer stream)))
+          ;; remaining payload. Bounded: a peer that holds the connection
+          ;; open (e.g. an HTTP keep-alive server that never FINs) must not
+          ;; block us forever -- we have already sent our FIN, which is the
+          ;; part that matters for an orderly close.
+          (loop repeat 40                       ; ~2s at *relay-poll-timeout*
+                until (%eof s)
+                do (%fill-read-buffer-poll stream *relay-poll-timeout*)))
       ;; a reset (or the reader thread going away) just means the
       ;; connection is already gone; nothing left to clean up on the wire.
       (econnreset () nil)
       (error () nil))
     (remove-connection client +tcp-protocol+ (%key s))
-    (release-client-port client (%src-port s))))
+    ;; a passive socket's local port is the fixed exposed port, not an
+    ;; ephemeral one we allocated, so there is nothing to release.
+    (unless (%passive s)
+      (release-client-port client (%src-port s)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Listening for inbound connections (the server side of the stack)
+;;; ---------------------------------------------------------------------------
+
+(defclass server-socket ()
+  ((client :initarg :client :reader client)
+   (port :initarg :port :reader port)
+   ;; the reader pushes a descriptor for each inbound SYN onto this queue;
+   ;; SOCKET-ACCEPT pops them and completes the handshakes.
+   (%queue :initarg :queue :reader %queue)))
+
+(defun socket-listen (client &key port)
+  "Listen for inbound VPN connections destined to PORT. Returns a
+SERVER-SOCKET whose SOCKET-ACCEPT yields established connections."
+  (let ((queue (lp.q:make-queue)))
+    (register-listener client port queue)
+    (make-instance 'server-socket :client client :port port :queue queue)))
+
+(defmethod socket-accept ((s server-socket))
+  "Block until a peer opens a connection to the listening port, complete
+the passive open, and return the established CLIENT-SOCKET."
+  (%accept-descriptor s (lp.q:pop-queue (%queue s))))
+
+(defun %accept-descriptor (s descriptor)
+  "Complete the passive open for one inbound connection DESCRIPTOR (as
+pushed by the reader) and return the established CLIENT-SOCKET."
+  (destructuring-bind (local-ip local-port peer-ip peer-port) descriptor
+    (make-instance 'client-socket
+                   :client (client s)
+                   :protocol :stream
+                   :passive t
+                   :src-ip local-ip
+                   :src-port local-port
+                   :dst-ip peer-ip
+                   :dst-port peer-port)))
+
+(defmethod socket-unlisten ((s server-socket))
+  "Stop accepting new connections on this listener."
+  (unregister-listener (client s) (port s)))
+
+;;; ---------------------------------------------------------------------------
+;;; Exposing a local service: accept inbound connections and relay each to
+;;; a local OS socket. Deliberately single-threaded per connection (see
+;;; %RELAY) so we never read and write the same VPN connection at once.
+;;; ---------------------------------------------------------------------------
+
+(defclass exposure ()
+  ((client :initarg :client :reader client)
+   (%server-socket :initarg :server-socket :reader %server-socket)
+   (host :initarg :host :reader host)
+   (port :initarg :port :reader port)
+   (%accept-thread :accessor %accept-thread)))
+
+(defun expose (client &key vpn-port host port)
+  "Expose a local TCP service to VPN peers: accept inbound connections on
+VPN-PORT and relay each to HOST:PORT (a socket on this machine). Returns
+an EXPOSURE handle; stop it with UNEXPOSE."
+  (let* ((server (socket-listen client :port vpn-port))
+         (exposure (make-instance 'exposure
+                                  :client client
+                                  :server-socket server
+                                  :host host
+                                  :port port)))
+    (setf (%accept-thread exposure)
+          (bt:make-thread (%accept-loop exposure)
+                          :name (format nil "expose accept ~a" vpn-port)))
+    (register-exposure client exposure)
+    exposure))
+
+(defun unexpose (exposure)
+  "Stop an EXPOSURE: stop listening and tear down its accept loop."
+  (socket-unlisten (%server-socket exposure))
+  (ignore-errors (bt:destroy-thread (%accept-thread exposure)))
+  (unregister-exposure (client exposure) exposure))
+
+(defun %accept-loop (exposure)
+  (lambda ()
+    (loop
+      ;; Only dequeue here; the per-connection thread completes the passive
+      ;; open *and* relays. That way several handshakes proceed in parallel
+      ;; (each connection has its own packet queue, so this is safe) and a
+      ;; failed handshake can't stall or kill the accept loop.
+      (let ((descriptor (lp.q:pop-queue (%queue (%server-socket exposure)))))
+        (bt:make-thread
+         (lambda () (%handle-exposed-connection exposure descriptor))
+         :name "expose connection")))))
+
+(defun %handle-exposed-connection (exposure descriptor)
+  ;; the per-connection queue's key is exactly the descriptor
+  ;; (local-ip local-port peer-ip peer-port), see %READER-CALLBACK.
+  (let ((vpn-socket
+          (handler-case (%accept-descriptor (%server-socket exposure) descriptor)
+            (error (c)
+              (format t "expose: passive open failed: ~a~%" c)
+              (remove-connection (client exposure) +tcp-protocol+ descriptor)
+              nil))))
+    (when vpn-socket
+      (handler-case
+          (unwind-protect
+               (let ((os-socket (u:socket-connect (host exposure) (port exposure)
+                                                  :protocol :stream
+                                                  :element-type 'octet)))
+                 (unwind-protect
+                      (%relay vpn-socket os-socket)
+                   (ignore-errors (u:socket-close os-socket))))
+            (ignore-errors (socket-close vpn-socket)))
+        (error (c)
+          (format t "error handling exposed connection: ~a~%" c))))))
+
+(defun %relay (vpn-socket os-socket)
+  "Pump bytes both ways between an established VPN socket and a local OS
+socket until either side closes. Single-threaded on purpose: the
+userspace TCP stack uses one packet queue per connection, so reading and
+writing the same connection from two threads would race. We instead poll
+each side in turn."
+  (let ((vpn-stream (socket-stream vpn-socket))
+        (os-stream (u:socket-stream os-socket))
+        (buffer (make-array #x4000 :element-type 'octet)))
+    (loop
+      ;; 1. flush peer bytes already buffered on the VPN stream (e.g. data
+      ;;    that piggybacked on an ACK while we were writing).
+      (unless (%read-buffer-empty-p vpn-stream)
+        (%flush-vpn-read-buffer vpn-stream os-stream))
+      ;; 2. local -> peer
+      (when (u:wait-for-input os-socket :timeout 0 :ready-only t)
+        (let ((n (%drain-ready-input os-stream buffer)))
+          (when (eq n :eof) (return))   ; local closed its side
+          (write-sequence buffer vpn-stream :end n)
+          (finish-output vpn-stream)))
+      ;; 3. peer -> local (block briefly so we don't busy-spin)
+      (when (and (%read-buffer-empty-p vpn-stream) (not (%eof vpn-socket)))
+        (case (%fill-read-buffer-poll vpn-stream *relay-poll-timeout*)
+          (:data (%flush-vpn-read-buffer vpn-stream os-stream))
+          (:eof  (return))))           ; peer closed its side
+      (when (%eof vpn-socket) (return)))))
+
+(defun %flush-vpn-read-buffer (vpn-stream os-stream)
+  "Write the unconsumed portion of VPN-STREAM's read buffer to OS-STREAM."
+  (write-sequence (%read-buffer vpn-stream) os-stream
+                  :start (%read-pos vpn-stream)
+                  :end (length (%read-buffer vpn-stream)))
+  (finish-output os-stream)
+  (setf (%read-pos vpn-stream) (length (%read-buffer vpn-stream))))
+
+(defun %drain-ready-input (stream buffer)
+  "STREAM is known to have input ready. Read the bytes available right now
+\(without blocking for a full buffer) into BUFFER, up to its length.
+Returns the byte count, or :EOF at end of stream."
+  (let ((first (read-byte stream nil :eof)))
+    (if (eq first :eof)
+        :eof
+        (progn
+          (setf (aref buffer 0) first)
+          (let ((n 1))
+            (loop while (and (< n (length buffer)) (listen stream))
+                  for b = (read-byte stream nil :eof)
+                  until (eq b :eof)
+                  do (setf (aref buffer n) b)
+                     (incf n))
+            n)))))
+

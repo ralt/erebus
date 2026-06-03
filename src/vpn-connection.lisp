@@ -43,10 +43,12 @@
                    (error (condition)
                      (format t "error in reader callback: ~a~%" condition)))))
               ((eq (protocol c) :stream)
-               (handler-case
-                   (funcall (reader-callback c) (u:socket-stream (%socket c)))
-                 (error (condition)
-                   (format t "error in reader callback: ~a~%" condition)))))
+               ;; Unlike datagrams, a TCP transport is a single framed
+               ;; byte stream: an error here (EOF, or a desync we can't
+               ;; resync from) means the connection is gone, so let it
+               ;; propagate to the outer handler and stop the loop rather
+               ;; than spinning on the same broken stream.
+               (funcall (reader-callback c) (u:socket-stream (%socket c)))))
           (error (condition)
             (format t "error in reader loop: ~a~%" condition)
             (funcall (error-callback c) condition)

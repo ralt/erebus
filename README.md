@@ -106,6 +106,9 @@ This is an early-stage project. Current support includes:
     - Reads and writes spanning multiple segments, so payloads larger than one TCP segment work in both directions (responses *and* requests)
 - A local HTTP/1.x proxy that forwards requests to VPN resources over the userspace TCP stack
     - Resolves hostnames, follows `Content-Length` / chunked / close-delimited response framing, and keeps the local client connection alive
+- Inbound TCP port-forwarding: expose a local service to VPN peers
+    - The userspace TCP stack accepts peer-initiated connections (passive open) and relays each to a local service (e.g. `127.0.0.1:8080`)
+    - Configured under `[proxy-in]` as `label = <vpn-port> <local-host>:<local-port>`; the relay is single-threaded per connection (simplicity over throughput)
 
 The roadmap prioritizes incremental progress and interoperability over completeness.
 
@@ -139,6 +142,20 @@ For poking at a running setup by hand (rather than through the automated test su
 (hunchentoot:stop *p)
 (disconnect *c)
 (dev-vpn-down)                    ; tear the container down
+```
+
+To go the other way and expose a *local* service to the VPN, run a server on
+the host and forward an exposed VPN port to it:
+
+```lisp
+;; with *c connected as above, and e.g. `python3 -m http.server 8080`
+;; running on the host:
+(defparameter *e (dev-expose *c :vpn-port 8080 :host "127.0.0.1" :port 8080))
+
+;; from inside the container (the VPN peer):
+;;   (run-in-container "erebus-dev" "curl -s http://10.8.0.2:8080/")
+
+(unexpose *e)
 ```
 
 There is also a one-shot smoke test that exercises the whole proxy path (404, a large fragmented response, and a `Connection: close` request) against a throwaway container:
