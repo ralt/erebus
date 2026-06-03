@@ -136,7 +136,7 @@ Outcome:
 * Practical access to VPN resources
 * Clear demonstration of rootless design goals
 
-## Phase 6 — Expose local services to the VPN
+## ✅ Phase 6 — Expose local services to the VPN
 
 Goal: allow VPN peers to access selected local services through the client.
 
@@ -147,7 +147,7 @@ Scope:
 
 Key tasks:
 
-* Accept incoming VPN connections
+* Accept incoming VPN connections (passive open in the userspace TCP stack)
 * Forward traffic to local services (e.g. local HTTP server)
 * Handle bidirectional data flow
 * Apply basic access controls
@@ -156,6 +156,18 @@ Outcome:
 
 * Bidirectional VPN interaction without kernel networking
 * Enables lightweight ingress use cases
+
+Notes:
+
+* The userspace TCP stack now accepts peer-initiated connections (LISTEN →
+  SYN-RECEIVED → ESTABLISHED) in addition to opening its own. An exposed port
+  is configured under `[proxy-in]` (`label = <vpn-port> <local-host>:<local-port>`)
+  and each inbound connection is relayed to the local service.
+* The relay is intentionally single-threaded per connection: the stop-and-wait
+  stack uses one packet queue per connection, so it polls each side in turn
+  rather than reading and writing concurrently. Simplicity over throughput.
+* Basic access controls (per-port source allow-lists) are intentionally
+  deferred; exposure being opt-in via config is the only control for now.
 
 ## Phase 7 — Documentation, positioning, and user-facing clarity
 

@@ -13,6 +13,11 @@
    (%packet-id-counter :accessor %packet-id-counter :initform 0)
    (%connections :accessor %connections)
    (%connections-lock :accessor %connections-lock)
+   ;; ports we accept inbound connections on: dst-port -> accept queue.
+   ;; guarded by %connections-lock.
+   (%listeners :accessor %listeners)
+   ;; running EXPOSURE handles, so DISCONNECT can tear them down.
+   (%exposures :accessor %exposures :initform nil)
    (%client-ip-address :accessor %client-ip-address)
    (%cipher-type :accessor %cipher-type)
    (%cipher-mode :accessor %cipher-mode)
@@ -81,6 +86,7 @@
   ;; make a new connection
   (dolist (protocol (list +icmp-protocol+ +tcp-protocol+))
     (setf (gethash protocol (%connections c)) (make-hash-table :test #'equal)))
+  (setf (%listeners c) (make-hash-table))
   (setf (%connections-lock c) (bt:make-lock))
   (setf (%vpn-connection c)
         (make-instance 'vpn-connection
@@ -147,8 +153,28 @@
   (setf (%ping-thread c) (bt:make-thread (%ping-loop c) :name "ping thread")))
 
 (defmethod disconnect ((c openvpn-client-static-key))
+  ;; stop accepting/relaying inbound connections before tearing the
+  ;; tunnel down (copy the list, UNEXPOSE mutates %exposures).
+  (dolist (exposure (copy-list (%exposures c)))
+    (unexpose exposure))
   (bt:destroy-thread (%ping-thread c))
   (disconnect (%vpn-connection c)))
+
+(defmethod register-listener ((c openvpn-client-static-key) port queue)
+  (bt:with-lock-held ((%connections-lock c))
+    (setf (gethash port (%listeners c)) queue)))
+
+(defmethod unregister-listener ((c openvpn-client-static-key) port)
+  (bt:with-lock-held ((%connections-lock c))
+    (remhash port (%listeners c))))
+
+(defmethod register-exposure ((c openvpn-client-static-key) exposure)
+  (bt:with-lock-held ((%connections-lock c))
+    (push exposure (%exposures c))))
+
+(defmethod unregister-exposure ((c openvpn-client-static-key) exposure)
+  (bt:with-lock-held ((%connections-lock c))
+    (setf (%exposures c) (remove exposure (%exposures c)))))
 
 (bin:defbinary %ping-packet (:byte-order :big-endian)
   (magic #x2a187bf3641eb4cb07ed2d0a981fc748
@@ -254,13 +280,39 @@
                           (return-from %reader-callback
                             (lp.q:push-queue (make-condition 'econnreset) queue)))
 
-                        ;; nothing is listening on this 4-tuple (e.g. a
-                        ;; packet arriving after we tore the connection
-                        ;; down): reset the peer. The RST's sequence number
-                        ;; must be the ack number of the packet we're
-                        ;; replying to, otherwise the peer ignores it as
-                        ;; out of window.
                         (unless queue
+                          ;; A pure SYN to a port we are listening on is a
+                          ;; peer opening a connection to us (a passive
+                          ;; open). Hand it to the listener rather than
+                          ;; resetting. We create the per-connection queue
+                          ;; here, inside the single reader thread, so the
+                          ;; follow-up ACK/data cannot race ahead of the
+                          ;; accept and get reset.
+                          (let ((listener-queue
+                                  (and (= 1 (tcp-header-syn tcp-header))
+                                       (= 0 (tcp-header-ack tcp-header))
+                                       (bt:with-lock-held ((%connections-lock c))
+                                         (gethash dst-port (%listeners c))))))
+                            (when listener-queue
+                              (let ((conn-queue (lp.q:make-queue)))
+                                (bt:with-lock-held ((%connections-lock c))
+                                  (setf (gethash key (gethash protocol (%connections c)))
+                                        conn-queue))
+                                (lp.q:push-queue
+                                 (list tcp-header rest-stream
+                                       (- (ipv4-header-total-length packet-header)
+                                          20 tcp-header-length))
+                                 conn-queue)
+                                (lp.q:push-queue (list dst-ip dst-port src-ip src-port)
+                                                 listener-queue))
+                              (return-from %reader-callback)))
+
+                          ;; nothing is listening on this 4-tuple (e.g. a
+                          ;; packet arriving after we tore the connection
+                          ;; down): reset the peer. The RST's sequence number
+                          ;; must be the ack number of the packet we're
+                          ;; replying to, otherwise the peer ignores it as
+                          ;; out of window.
                           (return-from %reader-callback
                             (send-packet c +tcp-protocol+ key
                                           (%make-ipv4-tcp-packet dst-ip dst-port
@@ -285,6 +337,19 @@
       (when (eq (type-of result) 'condition)
         (error result))
       result)))
+
+(defmethod poll-packet ((c openvpn-client-static-key) protocol key timeout)
+  "Like RECEIVE-PACKET but waits at most TIMEOUT seconds, returning NIL if
+no packet arrives in time."
+  (let ((queue))
+    (bt:with-lock-held ((%connections-lock c))
+      (setf queue (gethash key (gethash protocol (%connections c)))))
+    (multiple-value-bind (result presentp)
+        (lp.q:try-pop-queue queue :timeout timeout)
+      (when presentp
+        (when (eq (type-of result) 'condition)
+          (error result))
+        result))))
 
 (defmethod remove-connection ((c openvpn-client-static-key) protocol key)
   (bt:with-lock-held ((%connections-lock c))

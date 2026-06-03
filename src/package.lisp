@@ -20,5 +20,11 @@
            #:socket-connect
            #:socket-stream
            #:socket-close
+           #:socket-listen
+           #:socket-accept
+           #:socket-unlisten
+           #:server-socket
+           #:expose
+           #:unexpose
            #:econnreset
            #:acceptor))

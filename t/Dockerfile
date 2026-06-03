@@ -6,7 +6,7 @@
 
 FROM kylemanna/openvpn
 
-RUN apk add nginx python3 man-pages tinyproxy
+RUN apk add nginx python3 man-pages tinyproxy curl
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 

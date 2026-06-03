@@ -17,8 +17,12 @@
     (return-from cli-handler
       (cli:print-usage command t)))
   (let* ((config (ini:parse-ini (cli:getopt command :config)))
-         (port (or (ini:ini-value config :port :section :erebus) 11023))
-         (address (or (ini:ini-value config :address :section :erebus) "127.0.0.1")))
+         ;; [proxy-out]: the local outbound HTTP proxy (optional).
+         (proxy-out (cdr (find :proxy-out config :key #'car)))
+         (address (or (ini:ini-value config :address :section :proxy-out) "127.0.0.1"))
+         (port (or (ini:ini-value config :port :section :proxy-out) 11023))
+         ;; [proxy-in]: inbound port-forwards (label = <vpn-port> <host>:<port>).
+         (proxy-in (cdr (find :proxy-in config :key #'car))))
     (cond ((ini:ini-value config :host :section :openvpn-server)
            (let ((secret (ini:ini-value config :secret :section :openvpn-server)))
              (unless secret
@@ -39,11 +43,28 @@
                       :auth (ini:ini-value config :auth :section :openvpn-server))))
                (connect client)
                (unwind-protect
-                    (h:start (make-instance 'acceptor
-                                            :address address
-                                            :port port
-                                            :client client))
+                    (progn
+                      ;; bring up inbound port-forwards
+                      (dolist (entry proxy-in)
+                        (multiple-value-bind (vpn-port host local-port)
+                            (%parse-forward (cdr entry))
+                          (expose client :vpn-port vpn-port :host host :port local-port)))
+                      ;; bring up the outbound proxy if configured
+                      (when proxy-out
+                        (h:start (make-instance 'acceptor
+                                                :address address
+                                                :port port
+                                                :client client)))
+                      ;; stay up until interrupted; the threads above do the work.
+                      (loop (sleep 3600)))
                  (disconnect client))))))))
+
+(defun %parse-forward (spec)
+  "Parse a [proxy-in] value \"<vpn-port> <local-host>:<local-port>\" into
+\(values vpn-port host local-port)."
+  (destructuring-bind (vpn-port target) (uiop:split-string spec :separator " ")
+    (destructuring-bind (host local-port) (uiop:split-string target :separator ":")
+      (values (parse-integer vpn-port) host (parse-integer local-port)))))
 
 ;; we want to print usage whenever an option is wrong
 (defmethod cli:parse-command-line :around (command arguments)

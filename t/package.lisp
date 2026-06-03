@@ -74,6 +74,22 @@ has changed since the last build (tracked with a stamp file)."
                     :output t
                     :error-output t))
 
+(defun run-in-container-output (name command)
+  "Like RUN-IN-CONTAINER but returns the command's stdout as a (stripped)
+string, for assertions."
+  (uiop:run-program (format nil "docker exec -i ~a bash -c ~s" name command)
+                    :output '(:string :stripped t)
+                    :error-output t))
+
+(defun run-python-in-container (name code)
+  "Run CODE (a python3 program) inside container NAME and return its
+stdout. The program is base64-encoded so we never have to fight shell
+quoting for the (potentially multi-line, quote-heavy) source."
+  (run-in-container-output
+   name
+   (format nil "echo ~a | base64 -d | python3"
+           (cl-base64:string-to-base64-string code :columns 0))))
+
 (defun prepare-container (name folder)
   (uiop:run-program
    (format nil "docker start ~a" name)
@@ -215,6 +231,47 @@ newline)."
           until (or (eq b :eof) (= b 10))
           do (write-char (code-char b) out))))
 
+;;; A local (host-side) TCP server, used to test inbound port-forwarding:
+;;; erebus exposes a VPN port and relays connections to one of these.
+
+(defun %serve-local (listen-socket handler)
+  (lambda ()
+    (loop
+      (let ((conn (usocket:socket-accept listen-socket :element-type '(unsigned-byte 8))))
+        (bordeaux-threads:make-thread
+         (lambda ()
+           (unwind-protect
+                (funcall handler (usocket:socket-stream conn))
+             (ignore-errors (usocket:socket-close conn))))
+         :name "local tcp connection")))))
+
+(defmacro with-local-tcp-server ((port handler) &body body)
+  "Start a host-side TCP server on 127.0.0.1 (ephemeral port bound to
+PORT) that runs HANDLER, a (lambda (stream) ...), once per accepted
+connection. Tear it down after BODY."
+  (a:with-gensyms (listen thread)
+    `(let* ((,listen (usocket:socket-listen "127.0.0.1" 0
+                                            :element-type '(unsigned-byte 8)
+                                            :reuse-address t))
+            (,port (usocket:get-local-port ,listen))
+            (,thread (bordeaux-threads:make-thread (%serve-local ,listen ,handler)
+                                                   :name "local tcp server")))
+       (declare (ignorable ,port))
+       (unwind-protect (progn ,@body)
+         (ignore-errors (bordeaux-threads:destroy-thread ,thread))
+         (ignore-errors (usocket:socket-close ,listen))))))
+
+(defun read-n-octets (stream n)
+  "Read exactly N octets from STREAM into a fresh vector."
+  (let ((buffer (make-array n :element-type '(unsigned-byte 8))))
+    (read-sequence buffer stream)
+    buffer))
+
+(defun be32-to-integer (bytes)
+  "Decode a 4-octet big-endian vector to an integer."
+  (+ (ash (aref bytes 0) 24) (ash (aref bytes 1) 16)
+     (ash (aref bytes 2) 8) (aref bytes 3)))
+
 (defmacro with-proxy ((proxy-port client) &body body)
   "Start an erebus HTTP proxy bound to CLIENT on a random local port,
 bind PROXY-PORT to it for the duration of BODY, and stop it afterwards."
@@ -305,3 +362,15 @@ acceptor; (hunchentoot:stop ...) it when done."
   (let ((acceptor (make-instance 'acceptor :address "127.0.0.1" :port port :client client)))
     (hunchentoot:start acceptor)
     acceptor))
+
+(defun dev-expose (client &key vpn-port (host "127.0.0.1") port)
+  "Expose a local service to the dev VPN: forward inbound connections on
+VPN-PORT (reachable at the client's VPN IP, 10.8.0.2) to HOST:PORT on this
+machine. Returns the exposure handle; (unexpose ...) it when done.
+
+For example, with a local web server on port 8080:
+  (defparameter *e (dev-expose *c :vpn-port 8080 :port 8080))
+  ;; from a shell:
+  ;;   (run-in-container \"erebus-dev\" \"curl -s http://10.8.0.2:8080/\")
+  (unexpose *e)"
+  (expose client :vpn-port vpn-port :host host :port port))
