@@ -27,6 +27,7 @@
                              (:file "data-plane")
                              (:file "openvpn")
                              (:file "ikev2")
+                             (:file "esp")
                              (:file "socket")
                              (:file "http")
                              (:file "main"))))
