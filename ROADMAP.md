@@ -223,7 +223,7 @@ Notes:
   * `doc/architecture.md` — the user-space-vs-kernel rationale, the embedded
     TCP/IP stack's design and what it gives up, and the performance vs
     portability vs safety trade-off, with a data-flow diagram.
-  * `site/index.html` — a small, self-contained project website (no build
+  * `docs/index.html` — a small, self-contained project website (no build
     step): elevator pitch, how it works, use cases (where it shines / where
     it's the wrong tool), and an FAQ.
 * No new protocol features, by design.

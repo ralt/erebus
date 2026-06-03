@@ -124,5 +124,5 @@ the body round-trips. Reuse the container/test helpers in `t/package.lisp`.
 - `README.md` — the "What works less well" / proxy bullets.
 - `doc/erebus.1` — the `[proxy-out]` description and the LIMITATIONS section
   (currently states "no HTTPS `CONNECT` tunnelling").
-- `site/index.html` — the "Can it proxy HTTPS?" FAQ and the "wrong tool" list.
+- `docs/index.html` — the "Can it proxy HTTPS?" FAQ and the "wrong tool" list.
 - `ROADMAP.md` — move this item from Phase 10's list to done.

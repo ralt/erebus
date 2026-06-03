@@ -174,9 +174,10 @@ sbcl --script t/manual-verify.lisp
 - **Architecture & trade-offs** — [`doc/architecture.md`](doc/architecture.md):
   why everything runs in user space, how the layers fit, what the embedded
   TCP/IP stack gives up, and the performance vs portability vs safety bargain.
-- **Project website** — [`site/index.html`](site/index.html): a small,
+- **Project website** — [`docs/index.html`](docs/index.html): a small,
   self-contained page (no build step) with the elevator pitch, a diagram, use
-  cases, and an FAQ. Open it in a browser, or serve the `site/` directory.
+  cases, and an FAQ. Open it in a browser, or serve the `docs/` directory
+  (it is also what GitHub Pages publishes).
 - **OpenVPN static-key wire format** —
   [`doc/openvpn-static-key-protocol-version-1.md`](doc/openvpn-static-key-protocol-version-1.md):
   the protocol itself, independent of this implementation.
