@@ -166,6 +166,25 @@ sbcl --script t/manual-verify.lisp
 
 `dev-vpn-up` accepts the same options as the server-config helper, so for example a backend service can be launched alongside openvpn with `(dev-vpn-up :pre "nohup echo-server &")`.
 
+## Documentation
+
+- **Man page** — [`doc/erebus.1`](doc/erebus.1): options, the full
+  configuration reference (sections, ciphers, digests), examples, and a candid
+  limitations section. Read it formatted with `make man`.
+- **Architecture & trade-offs** — [`doc/architecture.md`](doc/architecture.md):
+  why everything runs in user space, how the layers fit, what the embedded
+  TCP/IP stack gives up, and the performance vs portability vs safety bargain.
+- **Project website** — [`site/index.html`](site/index.html): a small,
+  self-contained page (no build step) with the elevator pitch, a diagram, use
+  cases, and an FAQ. Open it in a browser, or serve the `site/` directory.
+- **OpenVPN static-key wire format** —
+  [`doc/openvpn-static-key-protocol-version-1.md`](doc/openvpn-static-key-protocol-version-1.md):
+  the protocol itself, independent of this implementation.
+- **Performance** — [`doc/stress-results.md`](doc/stress-results.md): measured
+  cost and how to reproduce it (`make stress`).
+- **Roadmap** — [`ROADMAP.md`](ROADMAP.md): the incremental plan and what later
+  phases add.
+
 ## License
 
 GPLv3 License.
