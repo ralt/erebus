@@ -26,6 +26,7 @@
                              (:file "vpn-connection")
                              (:file "data-plane")
                              (:file "openvpn")
+                             (:file "ikev2")
                              (:file "socket")
                              (:file "http")
                              (:file "main"))))
@@ -41,6 +42,7 @@
                 :serial t
                 :components ((:file "package")
                              (:file "connect")
+                             (:file "ikev2")
                              (:file "openvpn-statickey")
                              (:file "expose"))))
   :perform (test-op (op c)
