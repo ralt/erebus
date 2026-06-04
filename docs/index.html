@@ -232,8 +232,8 @@
 
     <header class="hero" id="top">
         <h1>erebus</h1>
-        <p class="tagline">A VPN client that runs entirely in user space — no root, no kernel tunnels, no global routing.</p>
-        <p class="sub">erebus speaks OpenVPN and IPsec/IKEv2 itself, builds its own IP packets, runs its own minimal TCP/IP stack, and hands you VPN access through an ordinary local HTTP proxy. It's a VPN <em>agent</em>, not a system-wide VPN.</p>
+        <p class="tagline">A VPN that doesn't ask for root and never touches your system — it just hands VPN access to the program that asks for it.</p>
+        <p class="sub">No kernel tunnel, no routing changes, nothing to clean up. erebus is a VPN <em>service you call</em>, not a mode your machine enters: point a client at a local proxy and only that traffic crosses the VPN — everything else on the host stays exactly as it was.</p>
         <div class="pills">
             <span class="pill">Rootless</span>
             <span class="pill">No TUN/TAP</span>
@@ -254,6 +254,15 @@
             <h2><span class="eyebrow">The pitch</span>What is erebus?</h2>
             <p class="lead">Traditional VPN clients assume they own the machine: they create a kernel <code>tun</code>/<code>tap</code> interface, rewrite your routing table, and need root to do it. That model breaks in containers, CI runners, sandboxes, and other locked-down hosts.</p>
             <p>erebus takes the opposite approach. It does all the VPN work — the OpenVPN protocol, IP packets, TCP state, encryption — inside a single user-space process. Nothing about the host's networking is touched. Connectivity is explicit and opt-in: you point a client at a local proxy, and only that traffic crosses the VPN.</p>
+
+            <h3 style="margin-top:1.25rem;">What that means in practice</h3>
+            <ul class="clean">
+                <li><strong>It runs as you.</strong> No <code>sudo</code>, no setup script, nothing to undo — start the process and it's there; kill it and it's gone.</li>
+                <li><strong>Your machine stays untouched.</strong> Interfaces, routes and DNS are exactly as before. Other apps never know it's running.</li>
+                <li><strong>You opt traffic in, per app.</strong> Only what you point at the proxy crosses the VPN — it's per-connection, not a setting your whole machine inherits.</li>
+                <li><strong>It works where a real VPN can't.</strong> Containers, CI runners, sandboxes, locked-down hosts — anywhere you can open a socket.</li>
+            </ul>
+
             <div class="grid grid-2" style="margin-top:1rem;">
                 <div class="card">
                     <h3>Outbound</h3>
