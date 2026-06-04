@@ -260,7 +260,7 @@ Outcome:
 * Fully standards-compatible OpenVPN client
 * Rootless operation preserved
 
-## Phase 9 — ESP / IKEv2 (strongSwan interoperability)
+## ✅ Phase 9 — ESP / IKEv2 (strongSwan interoperability)
 
 Goal: extend the architecture beyond OpenVPN to standard IPsec.
 
