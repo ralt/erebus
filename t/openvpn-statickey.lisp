@@ -148,3 +148,59 @@ test is not coupled to nginx's error-page whitespace across versions."
                                    :keep-alive t
                                    :close nil)
             (is (nginx-404-p body status))))))))
+
+(test https-connect-tunnelling
+  ;; The proxy must handle CONNECT to tunnel opaque TLS bytes to a VPN
+  ;; resource. nginx on the VPN side gets a self-signed cert on port 443;
+  ;; drakma issues CONNECT, the proxy relays the TLS handshake and data
+  ;; transparently. We check both a small response (404) and a clearly
+  ;; multi-segment one (a 20000 byte file) round-trip through the tunnel.
+  (let ((big-size 20000))
+    (with-docker-container
+        (name folder vpn-local-port
+              (lambda (name folder)
+                (declare (ignore folder))
+                (configure-openvpn name)
+                (run-in-container
+                 name
+                 "openssl req -x509 -newkey rsa:2048 -keyout /etc/nginx/server.key -out /etc/nginx/server.crt -days 365 -nodes -subj /CN=localhost")
+                (run-in-container
+                 name
+                 (format nil "python3 -c \"open('/usr/share/man/big.txt','w').write('A'*~a)\""
+                         big-size))
+                (run-python-in-container
+                 name
+                 "with open('/etc/nginx/conf.d/https.conf', 'w') as f:
+    f.write('''server {
+    listen 443 ssl;
+    ssl_certificate /etc/nginx/server.crt;
+    ssl_certificate_key /etc/nginx/server.key;
+    location / {
+        return 404;
+    }
+    location /man/ {
+        alias /usr/share/man/;
+    }
+}
+''')")))
+      (with-test-client (client folder vpn-local-port)
+        (with-proxy (proxy-port client)
+          ;; small response: proves the TLS handshake + request + response
+          ;; all relay through the tunnel.
+          (multiple-value-bind (body status)
+              (drakma:http-request "https://10.8.0.1/"
+                                   :proxy `("127.0.0.1" ,proxy-port)
+                                   :verify nil
+                                   :keep-alive t
+                                   :close nil)
+            (is (nginx-404-p body status)))
+          ;; large response: exercises the relay across many TCP segments.
+          (multiple-value-bind (body status)
+              (drakma:http-request "https://10.8.0.1/man/big.txt"
+                                   :proxy `("127.0.0.1" ,proxy-port)
+                                   :verify nil
+                                   :keep-alive t
+                                   :close nil)
+            (is (= 200 status))
+            (is (= big-size (length body)))
+            (is (every (lambda (c) (char= c #\A)) body))))))))

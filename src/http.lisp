@@ -8,24 +8,80 @@
   ;; stream the body ourselves.
   (setf h:*methods-for-post-parameters* nil))
 
+;;; --- HTTPS CONNECT tunnelling support ---
+;;;
+;;; For a CONNECT request we actively open the VPN socket to the target,
+;;; tell the client the tunnel is established, detach the socket from
+;;; Hunchentoot, and hand both sockets to %RELAY (shared with inbound
+;;; port-forwarding) to pump opaque bytes -- the TLS payload, which we
+;;; never inspect -- both ways until either side closes.
+
+(defvar *http-client-socket* nil
+  "The client USOCKET of the connection currently being processed, captured
+by the PROCESS-CONNECTION :AROUND method. %HANDLE-CONNECT needs the raw
+socket (%RELAY polls it with WAIT-FOR-INPUT); Hunchentoot's request object
+does not expose it.")
+
+(defmethod h:process-connection :around ((a acceptor) socket)
+  (let ((*http-client-socket* socket))
+    (call-next-method)))
+
 ;; Hop-by-hop headers (RFC 7230 6.1) plus framing headers we regenerate
 ;; ourselves. These must not be blindly forwarded back to the client.
 (defparameter +skipped-response-headers+
   '("connection" "keep-alive" "proxy-authenticate" "proxy-authorization"
     "te" "trailer" "transfer-encoding" "upgrade" "content-length"))
 
+(defparameter +connect-established-response+
+  (b:string-to-octets
+   (format nil "HTTP/1.1 200 Connection Established~C~C~C~C"
+           #\Return #\Linefeed #\Return #\Linefeed))
+  "The CONNECT success status line. Built with explicit CR/LF: \"\\r\\n\" is
+not an escape sequence in Common Lisp string literals.")
+
 (defmethod h:acceptor-dispatch-request ((a acceptor) request)
+  (if (eq (h:request-method request) :connect)
+      (%handle-connect a request)
+      (multiple-value-bind (host port)
+          (%parse-host-header request)
+        (let ((socket (socket-connect (%client a)
+                                      :protocol :stream
+                                      :host (%resolve-hostname host)
+                                      :port port)))
+          (unwind-protect
+               (let ((socket-stream (socket-stream socket)))
+                 (%forward-request request socket-stream)
+                 (%forward-response socket-stream))
+            (socket-close socket))))))
+
+(defun %handle-connect (a request)
+  "Tunnel a CONNECT request: open the VPN socket to the requested
+authority, acknowledge the tunnel, and relay opaque bytes between the
+client and the target until either side closes."
   (multiple-value-bind (host port)
-      (%parse-host-header request)
-    (let ((socket (socket-connect (%client a)
-                                  :protocol :stream
-                                  :host (%resolve-hostname host)
-                                  :port port)))
+      (%parse-authority (h:request-uri request))
+    (let ((vpn-socket (socket-connect (%client a)
+                                      :protocol :stream
+                                      :host (%resolve-hostname host)
+                                      :port port))
+          (client-socket *http-client-socket*))
       (unwind-protect
-           (let ((socket-stream (socket-stream socket)))
-             (%forward-request request socket-stream)
-             (%forward-response socket-stream))
-        (socket-close socket)))))
+           (let ((client-stream (u:socket-stream client-socket)))
+             (write-sequence +connect-established-response+ client-stream)
+             (finish-output client-stream)
+             ;; suppress Hunchentoot's own response and take ownership of
+             ;; the socket; from here we are just an opaque byte pump.
+             (setf hunchentoot::*headers-sent* t)
+             (h:detach-socket a)
+             (%relay vpn-socket client-socket))
+        (ignore-errors (socket-close vpn-socket))
+        (ignore-errors (u:socket-close client-socket))))))
+
+(defun %parse-authority (authority)
+  "Split an authority-form request target (\"host:port\") into HOST and PORT."
+  (let ((colon (position #\: authority)))
+    (values (subseq authority 0 colon)
+            (parse-integer (subseq authority (1+ colon))))))
 
 (defun %forward-request (request socket-stream)
   "Write REQUEST (status line, headers and body) to the VPN-side socket."

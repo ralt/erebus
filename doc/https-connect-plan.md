@@ -1,8 +1,6 @@
 # Implementation plan: HTTPS `CONNECT` tunnelling
 
-Status: **planned** (roadmap Phase 10). This is a design note, not yet
-implemented. It records the investigation behind the "Can it proxy HTTPS?"
-limitation so the work can be picked up later without re-deriving it.
+Status: **implemented** (roadmap Phase 10).
 
 ## Goal
 
@@ -47,82 +45,100 @@ together.
     Hunchentoot's automatic response (`request.lisp` only calls `start-output`
     `unless *headers-sent*`). This is the same recipe websocket libraries use.
 
-## Sketch
+## Step-by-step implementation
 
-In `acceptor-dispatch-request` (`src/http.lisp`), branch on the method:
+### Step 1 — Expose the Hunchentoot socket to the handler
+
+`%relay` needs the raw `usocket` for `wait-for-input`. `acceptor-dispatch-request` only receives a `hunchentoot:request`, which does not expose the socket.
+
+In `src/http.lisp`, capture the socket in a special variable from a
+`process-connection :around` method (which receives the socket as its second
+argument) so the handler can reach it:
 
 ```lisp
-(if (eq (h:request-method request) :connect)
-    (%handle-connect a request)
-    ;; ... existing plain-HTTP path ...
-    )
+(defvar *http-client-socket* nil)
+
+(defmethod h:process-connection :around ((a acceptor) socket)
+  (let ((*http-client-socket* socket))
+    (call-next-method)))
 ```
 
-`%handle-connect` then:
+`process-connection` wraps the whole request, so `*http-client-socket*` is
+bound for the duration of `%handle-connect`.
+
+### Step 2 — Add `%handle-connect` in `src/http.lisp`
+
+Branch on method at the top of `acceptor-dispatch-request`:
+
+```lisp
+(defmethod h:acceptor-dispatch-request ((a acceptor) request)
+  (if (eq (h:request-method request) :connect)
+      (%handle-connect a request)
+      (multiple-value-bind (host port)
+          (%parse-host-header request)
+        ;; ... existing plain-HTTP path unchanged ...
+        )))
+```
+
+`%handle-connect` does:
 
 ```
-1. parse host:port from (h:request-uri request)          ; authority form, e.g. "example.internal:443"
+1. Parse host:port from (h:request-uri request)       ; authority-form, e.g. "example.internal:443"
 2. vpn = (socket-connect (%client a)
-                         :host (%resolve-hostname host)
-                         :port port)                      ; reuse the existing active open
-3. write "HTTP/1.1 200 Connection Established\r\n\r\n"    ; to the raw client stream
-   to the local client; finish-output
-4. (setf hunchentoot::*headers-sent* t)                  ; suppress Hunchentoot's auto-response
-5. (h:detach-socket a)                                   ; we own the socket from here
-6. (%relay vpn <local-client-socket>)                    ; reuse the existing relay, roles mirrored
-7. close both sides (see "Closing" below)
+                          :host (%resolve-hostname host)
+                          :port port)                   ; reuse the existing active open
+3. Write the CONNECT success status line          ; to (u:socket-stream *http-client-socket*)
+   finish-output                                  ; NB: build it with explicit #\Return #\Linefeed --
+                                                  ; "\r\n" is NOT an escape in CL string literals
+4. (setf hunchentoot::*headers-sent* t)                ; suppress Hunchentoot's auto-response
+5. (h:detach-socket a)                                  ; we own the socket from here
+6. os-socket = *http-client-socket*                     ; the captured usocket
+7. (%relay vpn os-socket)                               ; reuse the existing relay, roles mirrored
+8. Close both sides in unwind-protect (socket-close vpn and u:socket-close os-socket)
 ```
 
-## The one fiddly bit: client-side readiness polling
+The raw client socket is the one captured in `*http-client-socket*`.
 
-`%relay` calls `usocket:wait-for-input` on the OS socket to pump without
-busy-spinning. Hunchentoot's `request` object does **not** expose the underlying
-`usocket` socket via a reader (only `remote-addr`/`remote-port`/`content-stream`,
-see `request.lisp`). Two ways around it:
+### Step 3 — No changes to `socket.lisp`
 
-- **Preferred:** override `acceptor-make-request` on the erebus `acceptor` to
-  stash the `socket` argument (which `process-connection` passes in) on a request
-  subclass slot, then hand that socket to `%relay` unchanged. About three lines,
-  and lets `%relay` be reused verbatim.
-- **Alternative:** write a `%relay` variant that uses `listen` on the request's
-  `content-stream` instead of `wait-for-input` on a socket. Simpler to wire, but
-  `listen` is slightly less reliable through Hunchentoot's stream wrappers.
+`%relay`, `socket-connect`, `%resolve-hostname` are all reused as-is.
 
-## Closing
+### Step 4 — Test
 
-`detach-socket` leaves `*close-hunchentoot-stream*` NIL, so Hunchentoot will
-**not** close the client stream — `%handle-connect` is responsible for closing
-both the VPN socket (`socket-close`) and the local client socket itself, in an
-`unwind-protect`, mirroring how `%handle-exposed-connection` cleans up today.
+Add a test. Two options, simplest first:
 
-## Constraints and caveats (carry these into the docs when shipped)
+**Option A (minimal):** Spin up a TLS echo server on the VPN side via the container `pre` hook, `CONNECT` through the proxy, write bytes, read them back and assert round-trip.
+
+**Option B (fuller):** Configure nginx in the docker container to also listen on 443 with a self-signed cert, then from the host do `https_proxy=http://127.0.0.1:<port> curl -k https://10.8.0.1/` and assert 200 + body.
+
+Reuse the existing `with-docker-container`, `with-test-client`, `with-proxy` helpers from `t/package.lisp`. Place the test in `t/openvpn-statickey.lisp` (or a new file if the test setup is large enough to warrant one).
+
+### Step 5 — Documentation updates
+
+- `README.md` — update the proxy capability bullets.
+- `doc/erebus.1` — remove the "no HTTPS CONNECT tunnelling" sentence from the LIMITATIONS section (lines 283-287).
+- `docs/index.html` — update the FAQ "Can it proxy HTTPS?" answer from "Not yet" to "Yes, via CONNECT tunnelling (opaque byte relay)."
+- `ROADMAP.md` — mark HTTPS CONNECT as done in Phase 10.
+- `doc/https-connect-plan.md` — update status from "ready to implement" to "implemented."
+
+## Constraints and caveats
 
 - **TLS stays opaque.** We do not terminate or inspect it. No certificate
-  handling, no TLS-to-backend on our side — the bytes are just relayed. (That is
-  the point; it is what makes this small.)
-- **Performance.** The user-space TCP stack is stop-and-wait (one piece at a
-  time, wait for confirmation). TLS handshakes are turn-based and fine, but a
-  large HTTPS download is the same "several times slower than a normal proxy"
-  story as plain HTTP today. Functional, not fast. See
-  [`stress-results.md`](stress-results.md).
+  handling, no TLS-to-backend on our side — the bytes are just relayed.
+- **Performance.** The user-space TCP stack is stop-and-wait. TLS handshakes are
+  turn-based and fine, but a large HTTPS download is the same "several times
+  slower than a normal proxy" story as plain HTTP today. Functional, not fast.
 - **Half-duplex relay.** `%relay` polls each side in turn rather than streaming
-  both directions at once (the stack's one-queue-per-connection rule). Fine for
-  request/response HTTPS; heavy simultaneous bidirectional streaming inside the
-  tunnel would feel the serialization.
+  both directions at once. Fine for request/response HTTPS; heavy simultaneous
+  bidirectional streaming inside the tunnel would feel the serialization.
 - **Fragmentation is already handled.** The stack segments large writes to fit
   the tun MTU, so big TLS records are not a new problem.
 
-## Testing
+## Estimated scope
 
-Add a docker-based test mirroring the existing proxy tests: run an HTTPS backend
-inside the openvpn container (e.g. nginx with a self-signed cert), then from the
-host do `https_proxy=http://127.0.0.1:11023 curl -k https://<vpn-ip>/` and assert
-the body round-trips. Reuse the container/test helpers in `t/package.lisp`.
-
-## Docs to update when shipped
-
-- `README.md` — the "What works less well" / proxy bullets.
-- `doc/erebus.1` — the `[proxy-out]` description and the LIMITATIONS section
-  (currently states "no HTTPS `CONNECT` tunnelling").
-- `docs/index.html` — the "Can it proxy HTTPS?" FAQ and the "wrong tool" list.
-- `ROADMAP.md` — move this item from Phase 10's list to done.
+| File | Change |
+|---|---|
+| `src/http.lisp` | ~25 new lines (request subclass, `%handle-connect`, method dispatch) |
+| `t/openvpn-statickey.lisp` | ~40 lines (test) |
+| `t/Dockerfile` | Maybe: self-signed cert generation in the container |
+| `README.md`, `doc/erebus.1`, `docs/index.html`, `ROADMAP.md` | One sentence each |

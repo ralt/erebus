@@ -107,6 +107,7 @@ This is an early-stage project. Current support includes:
     - Reads and writes spanning multiple segments, so payloads larger than one TCP segment work in both directions (responses *and* requests)
 - A local HTTP/1.x proxy that forwards requests to VPN resources over the userspace TCP stack
     - Resolves hostnames, follows `Content-Length` / chunked / close-delimited response framing, and keeps the local client connection alive
+    - HTTPS `CONNECT` tunnelling for opaque TLS passthrough
 - Inbound TCP port-forwarding: expose a local service to VPN peers
     - The userspace TCP stack accepts peer-initiated connections (passive open) and relays each to a local service (e.g. `127.0.0.1:8080`)
     - Configured under `[proxy-in]` as `label = <vpn-port> <local-host>:<local-port>`; the relay is single-threaded per connection (simplicity over throughput)

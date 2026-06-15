@@ -8,7 +8,7 @@
 
 FROM alpine:3.20
 
-RUN apk add --no-cache strongswan nginx python3 curl iproute2 bash
+RUN apk add --no-cache strongswan nginx python3 curl iproute2 bash openssl
 
 # alpine's nginx includes /etc/nginx/http.d/*.conf
 COPY nginx.conf /etc/nginx/http.d/default.conf

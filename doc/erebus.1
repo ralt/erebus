@@ -279,12 +279,11 @@ are configured statically and must match the server.
 .B CBC ciphers only
 No AEAD/GCM, no compression framing beyond the no-compress byte.
 .TP
-.B HTTP/1.x proxy only
-The outbound proxy speaks plain HTTP. It is an explicit proxy: there is no
-HTTPS
+.B HTTP/1.x proxy with HTTPS CONNECT
+The outbound proxy speaks plain HTTP and supports HTTPS
 .B CONNECT
-tunnelling, no SOCKS, and no system-wide routing. TLS-to-backend is not
-proxied.
+tunnelling for opaque TLS passthrough. No SOCKS or system-wide routing.
+TLS-to-backend is not proxied.
 .TP
 .B Minimal TCP stack
 The embedded TCP/IP stack supports the connection handshake, orderly teardown,

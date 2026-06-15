@@ -357,7 +357,7 @@ web = 8080 127.0.0.1:8080</code></pre>
                         <li>Moving large amounts of data fast — it's built for small, snappy requests, not bulk transfer</li>
                         <li>TLS-mode OpenVPN, certificates, or pushed config — not yet</li>
                         <li>A drop-in replacement for the full OpenVPN client</li>
-                        <li>HTTPS <code>CONNECT</code> tunnelling or SOCKS — explicit HTTP/1.x only</li>
+                        <li>SOCKS — explicit HTTP/1.x only</li>
                         <li>Anything needing a complete, tuned TCP/IP stack</li>
                     </ul>
                 </div>
@@ -395,7 +395,7 @@ web = 8080 127.0.0.1:8080</code></pre>
 
             <details>
                 <summary>Can it proxy HTTPS?</summary>
-                <p>Not yet. The outbound proxy speaks plain HTTP/1.x; there's no HTTPS <code>CONNECT</code> tunnelling, SOCKS, or TLS-to-backend. Those are future work.</p>
+                <p>Yes — the proxy supports HTTPS <code>CONNECT</code> tunnelling, which relays TLS bytes transparently without terminating or inspecting them. SOCKS and TLS-to-backend are not implemented.</p>
             </details>
 
             <details>

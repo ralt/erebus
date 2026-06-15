@@ -67,6 +67,55 @@
             (is (= big-size (length body)))
             (is (every (lambda (c) (char= c #\A)) body))))))))
 
+(defun configure-ipsec-https (name)
+  "Give the strongSwan container's nginx a self-signed cert on port 443 and
+reload it, so HTTPS CONNECT can be exercised over ESP. nginx is already
+running (start-ipsec started it), hence the reload."
+  (run-in-container
+   name
+   "openssl req -x509 -newkey rsa:2048 -keyout /etc/nginx/server.key -out /etc/nginx/server.crt -days 365 -nodes -subj /CN=localhost")
+  (run-python-in-container
+   name
+   "with open('/etc/nginx/http.d/https.conf', 'w') as f:
+    f.write('''server {
+    listen 443 ssl;
+    ssl_certificate /etc/nginx/server.crt;
+    ssl_certificate_key /etc/nginx/server.key;
+    location / { return 404; }
+    location /man/ { alias /usr/share/man/; }
+}
+''')")
+  (run-in-container name "nginx -s reload"))
+
+(test ipsec-https-connect-tunnelling
+  ;; HTTPS CONNECT tunnelling over ESP, mirroring the OpenVPN test: nginx
+  ;; gets a self-signed cert on 443, drakma issues CONNECT through the proxy,
+  ;; and the TLS handshake relays transparently. We check both a small (404)
+  ;; and a multi-segment (20000 byte) response round-trip through the tunnel.
+  (let ((big-size 20000))
+    (with-ipsec-container (name ike natt)
+      (configure-ipsec-https name)
+      (run-in-container
+       name
+       (format nil "python3 -c \"open('/usr/share/man/big.txt','w').write('A'*~a)\""
+               big-size))
+      (with-ipsec-test-client (client ike natt)
+        (with-proxy (proxy-port client)
+          ;; small response: proves the TLS handshake + request + response relay.
+          (multiple-value-bind (body status)
+              (drakma:http-request (format nil "https://~a/" +ipsec-server-ip+)
+                                   :proxy `("127.0.0.1" ,proxy-port)
+                                   :verify nil :keep-alive t :close nil)
+            (is (nginx-404-p body status)))
+          ;; large response: exercises the relay across many ESP segments.
+          (multiple-value-bind (body status)
+              (drakma:http-request (format nil "https://~a/man/big.txt" +ipsec-server-ip+)
+                                   :proxy `("127.0.0.1" ,proxy-port)
+                                   :verify nil :keep-alive t :close nil)
+            (is (= 200 status))
+            (is (= big-size (length body)))
+            (is (every (lambda (c) (char= c #\A)) body))))))))
+
 (defparameter +ipsec-py-preamble+
   "import socket,struct,sys,time
 def conn(port):
